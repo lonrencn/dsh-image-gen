@@ -195,14 +195,194 @@ export interface ImportRecord {
  * direction the same way (React Flow's defaultEdgeOptions never applies to
  * edges inserted directly through the edges state).
  */
-export function canvasEdge(source: string, target: string, className?: string): Edge {
+export function canvasEdge(source: string, target: string, className?: string, color?: string): Edge {
   return {
     id: `e-${source}-${target}`,
     source,
     target,
+    type: 'smoothstep',
     ...(className !== undefined ? { className } : {}),
-    markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      width: 14,
+      height: 14,
+      ...(color !== undefined ? { color } : {}),
+    },
   }
+}
+
+/**
+ * Arrowhead colors must be baked into markerEnd: React Flow renders all marker
+ * <defs> in one shared SVG outside the edge elements, so CSS cannot color them
+ * per edge class. These fallbacks mirror the CSS stroke fallbacks.
+ */
+export const EDGE_INPUT_FALLBACK_COLOR = '#9ca3af'
+export const EDGE_OUTPUT_FALLBACK_COLOR = '#4c78ff'
+
+/**
+ * Normalize every edge's arrowhead to the given colors. Applied to restored
+ * documents and import merges so legacy edges (no color, or a stale theme
+ * color from a previous session) always match their path stroke.
+ */
+export function restyleEdges(edges: readonly Edge[], colors: { input: string; output: string }): Edge[] {
+  return edges.map(edge => {
+    const isOutput = typeof edge.className === 'string' && edge.className.includes('dcv-edge-output')
+    const previous = typeof edge.markerEnd === 'object' && edge.markerEnd !== null ? edge.markerEnd : {}
+    return {
+      ...edge,
+      type: 'smoothstep',
+      markerEnd: {
+        ...previous,
+        type: MarkerType.ArrowClosed,
+        width: 14,
+        height: 14,
+        color: isOutput ? colors.output : colors.input,
+      },
+    }
+  })
+}
+
+export const LAYOUT_COL_GAP = 400
+export const LAYOUT_ROW_GAP = 300
+export const LAYOUT_GRID_COLUMNS = 4
+const LAYOUT_COMPONENT_GAP = 200
+
+/**
+ * Chronological grid for edge-less nodes. Session imports are view-only image
+ * grids by design (no edit-chain edges); users connect nodes manually when
+ * they want to continue editing.
+ */
+export function gridLayout(nodes: readonly CanvasNode[], columns = LAYOUT_GRID_COLUMNS): CanvasNode[] {
+  return nodes.map((node, index) => ({
+    ...node,
+    position: {
+      x: 60 + (index % columns) * LAYOUT_COL_GAP,
+      y: 60 + Math.floor(index / columns) * LAYOUT_ROW_GAP,
+    },
+  }))
+}
+
+function pushTo<K>(map: Map<K, string[]>, key: K, value: string): void {
+  map.set(key, [...(map.get(key) ?? []), value])
+}
+
+/**
+ * Layered layout for the manual "tidy layout" action. Connected stories are
+ * laid out separately and stacked vertically so they never interleave; within
+ * a component nodes are layered by longest-path depth (Kahn, cycle-safe) and
+ * barycenter-ordered per layer so edit chains read as parallel tracks.
+ * Edge-less isolated nodes pack into a grid below the stories.
+ */
+export function layoutCanvas(nodes: readonly CanvasNode[], edges: readonly Edge[]): CanvasNode[] {
+  const byId = new Map(nodes.map(node => [node.id, node]))
+  const incoming = new Map<string, string[]>()
+  const outgoing = new Map<string, string[]>()
+  const adjacent = new Map<string, string[]>()
+  for (const edge of edges) {
+    if (!byId.has(edge.source) || !byId.has(edge.target)) continue
+    pushTo(incoming, edge.target, edge.source)
+    pushTo(outgoing, edge.source, edge.target)
+    pushTo(adjacent, edge.source, edge.target)
+    pushTo(adjacent, edge.target, edge.source)
+  }
+  // Connected components (undirected), largest first so primary chains anchor the top.
+  const visited = new Set<string>()
+  const components: string[][] = []
+  for (const node of nodes) {
+    if (visited.has(node.id)) continue
+    const component: string[] = []
+    const stack = [node.id]
+    visited.add(node.id)
+    while (stack.length > 0) {
+      const id = stack.pop()!
+      component.push(id)
+      for (const next of adjacent.get(id) ?? []) {
+        if (visited.has(next)) continue
+        visited.add(next)
+        stack.push(next)
+      }
+    }
+    components.push(component)
+  }
+  components.sort((a, b) => b.length - a.length)
+  // Edge-less isolated nodes (session imports, loose uploads) pack into a grid
+  // instead of stacking one per row; only connected stories get the layered tree.
+  const isolated = components.filter(component => component.length === 1).map(component => component[0]!)
+  const connected = components.filter(component => component.length > 1)
+
+  const positions = new Map<string, { x: number; y: number }>()
+  let yCursor = 0
+  for (const component of connected) {
+    const member = new Set(component)
+    // Longest-path layering via Kahn; cycle members fall back to layer 0.
+    const depth = new Map<string, number>()
+    const pending = new Map<string, number>()
+    const children = new Map<string, string[]>()
+    const ready: string[] = []
+    for (const id of component) {
+      const parents = (incoming.get(id) ?? []).filter(parent => member.has(parent))
+      pending.set(id, parents.length)
+      if (parents.length === 0) {
+        depth.set(id, 0)
+        ready.push(id)
+      }
+      for (const parent of parents) pushTo(children, parent, id)
+    }
+    while (ready.length > 0) {
+      const id = ready.shift()!
+      for (const child of children.get(id) ?? []) {
+        const left = (pending.get(child) ?? 0) - 1
+        pending.set(child, left)
+        if (left === 0) {
+          depth.set(child, Math.max(...(incoming.get(child) ?? []).map(parent => depth.get(parent) ?? 0)) + 1)
+          ready.push(child)
+        }
+      }
+    }
+    for (const id of component) if (!depth.has(id)) depth.set(id, 0)
+
+    const layers = new Map<number, string[]>()
+    for (const id of component) pushTo(layers, depth.get(id) ?? 0, id)
+    const slotOf = new Map<string, number>()
+    for (const ids of layers.values()) ids.forEach((id, slot) => slotOf.set(id, slot))
+    // Barycenter sweeps: order each layer by the mean slot of its connected
+    // neighbours. Alternate forward/backward passes until settled.
+    const neighbourMean = (id: string, direction: 'in' | 'out'): number => {
+      const neighbours = (direction === 'in' ? incoming : outgoing).get(id) ?? []
+      const slots: number[] = []
+      for (const neighbour of neighbours) {
+        const slot = slotOf.get(neighbour)
+        if (slot !== undefined) slots.push(slot)
+      }
+      return slots.length === 0 ? (slotOf.get(id) ?? 0) : slots.reduce((a, b) => a + b, 0) / slots.length
+    }
+    const layerKeys = [...layers.keys()].sort((a, b) => a - b)
+    for (let pass = 0; pass < 6; pass += 1) {
+      const backward = pass % 2 === 1
+      const order = backward ? [...layerKeys].reverse() : layerKeys
+      for (const layer of order) {
+        const ids = layers.get(layer)!
+        const direction = backward ? 'out' : 'in'
+        ids.sort((a, b) => neighbourMean(a, direction) - neighbourMean(b, direction))
+        ids.forEach((id, slot) => slotOf.set(id, slot))
+      }
+    }
+    let maxSlot = 0
+    for (const layer of layerKeys) {
+      for (const [slot, id] of layers.get(layer)!.entries()) {
+        positions.set(id, { x: 60 + layer * LAYOUT_COL_GAP, y: yCursor + 60 + slot * LAYOUT_ROW_GAP })
+        maxSlot = Math.max(maxSlot, slot)
+      }
+    }
+    yCursor += (maxSlot + 1) * LAYOUT_ROW_GAP + LAYOUT_COMPONENT_GAP
+  }
+  isolated.forEach((id, index) => {
+    positions.set(id, {
+      x: 60 + (index % LAYOUT_GRID_COLUMNS) * LAYOUT_COL_GAP,
+      y: yCursor + 60 + Math.floor(index / LAYOUT_GRID_COLUMNS) * LAYOUT_ROW_GAP,
+    })
+  })
+  return nodes.map(node => ({ ...node, position: positions.get(node.id) ?? node.position }))
 }
 
 /** Rebuild image nodes and edit-chain edges from import records (ordered oldest first). */
@@ -233,31 +413,8 @@ export function buildImportGraph(records: readonly ImportRecord[]): { nodes: Can
     edgeKeys.add(key)
     edges.push(canvasEdge(source, target))
   }
-  // Layered layout: depth by distance from chain roots, then stack each layer.
-  const depth = new Map<string, number>()
-  const incoming = new Map<string, string[]>()
-  for (const edge of edges) {
-    const list = incoming.get(edge.target) ?? []
-    list.push(edge.source)
-    incoming.set(edge.target, list)
-  }
-  const depthOf = (id: string): number => {
-    const cached = depth.get(id)
-    if (cached !== undefined) return cached
-    const parents = incoming.get(id) ?? []
-    const value = parents.length === 0 ? 0 : Math.max(...parents.map(depthOf)) + 1
-    depth.set(id, value)
-    return value
-  }
-  for (const node of seen.values()) depthOf(node.id)
-  const perLayer = new Map<number, number>()
-  for (const [id, node] of seen) {
-    const layer = depth.get(id) ?? 0
-    const slot = perLayer.get(layer) ?? 0
-    perLayer.set(layer, slot + 1)
-    node.position = { x: 60 + layer * 340, y: 60 + slot * 300 }
-  }
-  return { nodes: [...seen.values()], edges }
+  // Layered layout with component packing happens in layoutCanvas below.
+  return { nodes: layoutCanvas([...seen.values()], edges), edges }
 }
 
 /** Merge an import graph into existing canvas state (nodes dedupe by id, edges by key). */

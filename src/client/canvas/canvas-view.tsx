@@ -6,6 +6,7 @@
 import {
   Background,
   BackgroundVariant,
+  ConnectionLineType,
   MarkerType,
   MiniMap,
   Panel,
@@ -36,8 +37,12 @@ import {
   buildGenerationRequest,
   buildImportGraph,
   canvasEdge,
+  EDGE_INPUT_FALLBACK_COLOR,
+  EDGE_OUTPUT_FALLBACK_COLOR,
+  gridLayout,
   imageNodeIdOf,
   isLegalConnection,
+  layoutCanvas,
   mergeIntoCanvas,
   newConfigNode,
   newImageNode,
@@ -45,6 +50,7 @@ import {
   nodeKindOf,
   outputPosition,
   resolveConfigInputs,
+  restyleEdges,
   stripVolatile,
   toDocument,
   type CanvasNode,
@@ -77,6 +83,7 @@ const VIEW_DICT = {
     undo: '撤销',
     redo: '重做',
     fit: '适应视图',
+    relayout: '整理布局',
     deleteSelected: '删除选中',
     deleteSelectedNone: '请先选中要删除的节点',
     clear: '清空画布',
@@ -85,7 +92,7 @@ const VIEW_DICT = {
     saving: '保存中…',
     emptyTitle: '画布'
     ,
-    emptyHint: '空空如也。添加文本写提示词、拖线到配置节点发起生成，或一键导入本会话的编辑链。对话中生成的图也可随时「加入画布」。',
+    emptyHint: '空空如也。添加文本写提示词、拖线到配置节点发起生成，或一键导入本会话的图片。对话中生成的图也可随时「加入画布」。',
     importNone: '当前会话暂无可导入的图片',
     imported: '已导入 {n} 张图片',
     addedToCanvas: '已加入画布',
@@ -99,6 +106,7 @@ const VIEW_DICT = {
     undo: 'Undo',
     redo: 'Redo',
     fit: 'Fit view',
+    relayout: 'Tidy layout',
     deleteSelected: 'Delete selected',
     deleteSelectedNone: 'Select nodes to delete first',
     clear: 'Clear canvas',
@@ -106,7 +114,7 @@ const VIEW_DICT = {
     saved: 'Saved',
     saving: 'Saving…',
     emptyTitle: 'Canvas',
-    emptyHint: 'Nothing here yet. Add a text node for prompts, drag edges into a config node to generate, or import this session\'s edit chain. Images from the conversation can be sent to the canvas anytime.',
+    emptyHint: 'Nothing here yet. Add a text node for prompts, drag edges into a config node to generate, or import this session\'s images. Images from the conversation can be sent to the canvas anytime.',
     importNone: 'No importable images in this session yet',
     imported: 'Imported {n} images',
     addedToCanvas: 'Added to canvas',
@@ -153,6 +161,28 @@ function CanvasWorkspace({ locale, sessionId, useSessions }: CanvasViewTabProps)
   const futureRef = useRef<HistorySnapshot[]>([])
   // In-flight generation abort controllers; cleaned up on unmount so a remount never resumes a phantom request.
   const generateControllersRef = useRef(new Set<AbortController>())
+  const rootRef = useRef<HTMLDivElement>(null)
+  // Arrowhead colors resolved from the live host theme; baked into markerEnd
+  // because shared marker <defs> cannot be styled per edge via CSS.
+  const edgeColorsRef = useRef<{ input: string; output: string }>({
+    input: EDGE_INPUT_FALLBACK_COLOR,
+    output: EDGE_OUTPUT_FALLBACK_COLOR,
+  })
+
+  // Resolve theme-driven edge colors once mounted (paths use CSS vars; heads use these).
+  useEffect(() => {
+    const el = rootRef.current
+    if (el === null) return
+    const computed = getComputedStyle(el)
+    const read = (name: string, fallback: string): string => {
+      const value = computed.getPropertyValue(name).trim()
+      return value.length > 0 ? value : fallback
+    }
+    edgeColorsRef.current = {
+      input: read('--dsw-alias-label-dimmed', EDGE_INPUT_FALLBACK_COLOR),
+      output: read('--dsw-alias-brand-primary', EDGE_OUTPUT_FALLBACK_COLOR),
+    }
+  }, [])
 
   // Mirrored state for stable callbacks.
   const nodesRef = useRef(nodes)
@@ -345,9 +375,10 @@ function CanvasWorkspace({ locale, sessionId, useSessions }: CanvasViewTabProps)
       if (cancelled || doc === undefined) return
       const known = new Set(['image', 'text', 'config'])
       const restored = (doc.nodes as CanvasNode[]).filter(node => known.has(String(node.type)))
+      const restoredEdges = (doc.edges as Edge[]).filter(edge =>
+        restored.some(node => node.id === edge.source) && restored.some(node => node.id === edge.target))
       setNodes(restored)
-      setEdges((doc.edges as Edge[]).filter(edge =>
-        restored.some(node => node.id === edge.source) && restored.some(node => node.id === edge.target)))
+      setEdges(restyleEdges(restoredEdges, edgeColorsRef.current))
       if (doc.viewport !== undefined) instance.setViewport(doc.viewport)
       if (restored.length > 0) instance.fitView({ padding: 0.2, maxZoom: 1.2 })
     })
@@ -379,13 +410,15 @@ function CanvasWorkspace({ locale, sessionId, useSessions }: CanvasViewTabProps)
     if (graph.nodes.length === 0) return 0
     pushHistory()
     const wasEmpty = nodesRef.current.length === 0
+    // Session imports are view-only image grids by design: chronological grid,
+    // no edit-chain edges — users connect nodes manually to continue editing.
     const merged = mergeIntoCanvas(
       { nodes: nodesRef.current, edges: edgesRef.current },
-      graph,
+      { nodes: gridLayout(graph.nodes), edges: [] },
       wasEmpty ? { x: 0, y: 0 } : { x: 40, y: 40 },
     )
     setNodes(merged.nodes)
-    setEdges(merged.edges)
+    setEdges(restyleEdges(merged.edges, edgeColorsRef.current))
     if (wasEmpty) instance.fitView({ padding: 0.25, maxZoom: 1 })
     if (announce) showToast(dictRef.current.imported.replace('{n}', String(graph.nodes.length)))
     return graph.nodes.length
@@ -458,7 +491,8 @@ function CanvasWorkspace({ locale, sessionId, useSessions }: CanvasViewTabProps)
     pushHistory()
     setEdges(current => addEdge({
       ...connection,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+      type: 'smoothstep',
+      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: edgeColorsRef.current.input },
     }, current))
   }, [pushHistory, setEdges])
 
@@ -485,6 +519,15 @@ function CanvasWorkspace({ locale, sessionId, useSessions }: CanvasViewTabProps)
     setEdges([])
   }
 
+  // Re-run the layered layout over the whole graph (undoable) — the fix for
+  // tangled imports or hand-drawn chaos, no clear-and-reimport needed.
+  const relayout = useCallback(() => {
+    if (nodesRef.current.length === 0) return
+    pushHistory()
+    setNodes(layoutCanvas(nodesRef.current, edgesRef.current))
+    instance.fitView({ padding: 0.25, maxZoom: 1, duration: 300 })
+  }, [pushHistory, setNodes, instance])
+
   const nodeTypes: NodeTypes = canvasNodeTypes as unknown as NodeTypes
 
   return (
@@ -505,6 +548,7 @@ function CanvasWorkspace({ locale, sessionId, useSessions }: CanvasViewTabProps)
             <button type="button" className="dcv-btn" onClick={undo} disabled={pastRef.current.length === 0}>{dict.undo}</button>
             <button type="button" className="dcv-btn" onClick={redo} disabled={futureRef.current.length === 0}>{dict.redo}</button>
             <button type="button" className="dcv-btn" onClick={() => instance.fitView({ padding: 0.2, duration: 300 })}>{dict.fit}</button>
+            <button type="button" className="dcv-btn" onClick={relayout}>{dict.relayout}</button>
             <button type="button" className="dcv-btn" onClick={() => {
               if (nodesRef.current.some(node => node.selected)) deleteSelected()
               else showToast(dict.deleteSelectedNone)
@@ -519,8 +563,10 @@ function CanvasWorkspace({ locale, sessionId, useSessions }: CanvasViewTabProps)
             edges={edges}
             nodeTypes={nodeTypes}
             defaultEdgeOptions={{
+              type: 'smoothstep',
               markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
             }}
+            connectionLineType={ConnectionLineType.SmoothStep}
             isValidConnection={connection => isLegalConnection(
               nodesRef.current.find(node => node.id === connection.source),
               nodesRef.current.find(node => node.id === connection.target),

@@ -69,6 +69,8 @@ const CANVAS_CUSTOM_CSS = `
 /* In-flight generation edge: marching dashes while the placeholder spins. */
 .dcv-edge-pending .react-flow__edge-path{stroke-dasharray:6 4;animation:dcv-dash .5s linear infinite}
 @keyframes dcv-dash{to{stroke-dashoffset:-10}}
+/* The drag-preview connection line matches the input edge color. */
+.react-flow__connectionline path{stroke:var(--dsw-alias-label-dimmed,#9ca3af);stroke-width:1.6}
 .react-flow__handle.connecting{background:var(--dsw-alias-brand-primary,#4c78ff)}
 `
 
