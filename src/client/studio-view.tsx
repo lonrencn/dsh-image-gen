@@ -746,6 +746,9 @@ export const StudioView: FC<{
           })))
         }
         if (failed > 0) flash(t('comparePartial', { success: String(successes.length), failed: String(failed) }))
+        // See the single-generation path: history is persisted immediately so
+        // a view switch cannot drop the comparison results from the rail.
+        void persistGalleryHistory(galleryEntries)
         return
       }
 
@@ -813,6 +816,12 @@ export const StudioView: FC<{
         })))
       }
 
+      // Persist history immediately: the workbench unmounts when the user
+      // switches sessions or tabs, and in-memory batches would otherwise be
+      // lost from the recent rail. Best-effort — the result stays on screen
+      // even when IndexedDB write fails; the manual save retries it.
+      void persistGalleryHistory(galleryEntries)
+
       if (payload.failedCount && payload.failedCount > 0) {
         flash(t('partialSuccess', { success: String(generatedList.length), failed: String(payload.failedCount) }))
       }
@@ -829,6 +838,18 @@ export const StudioView: FC<{
     }
   }
 
+  /**
+   * Best-effort immediate history persistence for a fresh generation batch.
+   * Failures stay non-fatal (the result is already on screen and the manual
+   * save retries the write); each success live-updates the recent rail.
+   */
+  const persistGalleryHistory = async (entries: GalleryItem[]): Promise<void> => {
+    const settled = await Promise.allSettled(entries.map(entry => saveGalleryItem(entry)))
+    if (settled.some(result => result.status === 'rejected')) {
+      console.warn('[dsh-image-gen] history auto-save failed for some results')
+    }
+  }
+
   const isSelectedInGallery = useMemo(() => {
     if (selected === null) return false
     return items.some(item => item.id === selected.id)
@@ -840,19 +861,25 @@ export const StudioView: FC<{
     return currentBatch.filter(item => ids.has(item.id))
   }, [currentBatch, selectedBatchIds])
 
+  // The manual save's remaining job is the workspace file: history records
+  // are persisted on generation, so an entry is pending only until it carries
+  // a `savedTo` path (or its gallery write failed and still needs a retry).
   const pendingGalleryItems = useMemo(() => {
-    const galleryIds = new Set(items.map(item => item.id))
+    const galleryById = new Map(items.map(item => [item.id, item]))
     const targets = currentBatch === null ? (selected === null ? [] : [selected]) : selectedBatchItems
-    return targets.filter(item => !galleryIds.has(item.id))
+    return targets.filter(item => {
+      const known = galleryById.get(item.id)
+      return known === undefined || known.savedTo === undefined
+    })
   }, [currentBatch, items, selected, selectedBatchItems])
 
   const saveButtonLabel = currentBatch !== null
     ? pendingGalleryItems.length > 0
       ? t('saveSelected', { count: String(pendingGalleryItems.length) })
       : selectedBatchItems.length === 0 ? t('saveSelected', { count: '0' }) : t('inGallery')
-    : isSelectedInGallery ? t('inGallery') : t('saveToGallery')
+    : pendingGalleryItems.length > 0 ? t('saveToGallery') : (selected !== null ? t('inGallery') : t('saveToGallery'))
   const saveSelectionComplete = currentBatch === null
-    ? isSelectedInGallery
+    ? pendingGalleryItems.length === 0
     : selectedBatchItems.length > 0 && pendingGalleryItems.length === 0
 
   const saveGalleryEntry = async (item: GalleryItem): Promise<GalleryItem> => {
