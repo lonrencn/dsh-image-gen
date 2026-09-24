@@ -99,8 +99,9 @@ function ratioPosition(ratio: string): number {
 /**
  * Resolve the wire `size` for one workbench request against the relay table.
  * Falls down to the largest tier not exceeding the requested one (never up,
- * so an unsupported combination cannot silently spend more), then to the
- * smallest tier when the ratio offers nothing at or below.
+ * so an unsupported combination cannot silently spend more); unparseable
+ * quality labels (legacy `standard`) map to the ratio's lowest tier, and a
+ * ratio with nothing at or below the request is rejected loudly.
  * @param config - plugin configuration carrying `openaiCompatSizes`.
  * @param ratio - selected ratio option (`W:H`).
  * @param quality - selected resolution tier.
@@ -112,9 +113,13 @@ export function openAIRequestSize(config: Config, ratio: string, quality: string
     if (ratio === '2:3') return '1024x1536'
     return '1024x1024'
   }
-  const wanted = group.tiers.find(entry => entry.tier === quality)?.rank ?? group.tiers[0]!.rank
+  const requested = tierRank(quality)
+  const wanted = Number.isNaN(requested) ? group.tiers[0]!.rank : requested
   const withinBudget = group.tiers.filter(entry => entry.rank <= wanted)
-  return (withinBudget.length > 0 ? withinBudget : group.tiers).reduce((best, entry) => (entry.rank > best.rank ? entry : best)).size
+  if (withinBudget.length === 0) {
+    throw new Error(`该比例不支持 ${quality} 清晰度，请降低清晰度或更换比例`)
+  }
+  return withinBudget.reduce((best, entry) => (entry.rank > best.rank ? entry : best)).size
 }
 
 /** Workbench profile derived from the configured relay table. */
@@ -476,6 +481,11 @@ export function studioProfile(config: Config, provider: CloudImageProvider, conf
     return profile(provider, model, configured, ASPECT_RATIOS.map(option), IMAGE_SIZES.map(value => ({ value, label: value })), '1:1', '1K')
   }
   if (provider === 'openai-compat') {
+    // Empty table keeps the historical profile (quality `standard`) so
+    // persisted selections and existing callers stay valid.
+    if (config.openaiCompatSizes === undefined || Object.keys(config.openaiCompatSizes).length === 0) {
+      return profile(provider, model, configured, ['1:1', '3:2', '2:3'].map(option), [{ value: 'standard', label: '标准（推荐）' }], '1:1', 'standard')
+    }
     return openAICompatStudioProfile(config, model, configured)
   }
   if (provider === 'openai' || provider === 'xai' || provider === 'zhipu') {
