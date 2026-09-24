@@ -35,9 +35,32 @@ export interface GalleryItem {
 }
 
 const DB_NAME = 'dsh_image_gen_db'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const STORE_NAME = 'gallery_history'
 const TOMBSTONE_STORE = 'gallery_tombstones'
+const FAV_IMAGE_STORE = 'favorite_images'
+const FAV_PROMPT_STORE = 'favorite_prompts'
+
+/** A reference image kept in the workbench favorites rail. */
+export interface FavoriteImage {
+  /** Stable id: the attachment id, or a content hash for local files. */
+  id: string
+  /** Stored attachment reference, when the image already lives in DSH storage. */
+  attachment?: ImageAttachmentRef
+  /** Raw bytes for local files; structured-cloned into IndexedDB as a Blob. */
+  blob?: Blob
+  name: string
+  mediaType: string
+  addedAt: number
+}
+
+/** A prompt kept in the workbench favorites rail. */
+export interface FavoritePrompt {
+  /** Stable id derived from the trimmed text; identical prompts dedupe. */
+  id: string
+  text: string
+  addedAt: number
+}
 
 let dbPromise: Promise<IDBDatabase> | null = null
 let tombstonesCache: Set<string> | null = null
@@ -59,6 +82,12 @@ function getDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(TOMBSTONE_STORE)) {
         db.createObjectStore(TOMBSTONE_STORE, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(FAV_IMAGE_STORE)) {
+        db.createObjectStore(FAV_IMAGE_STORE, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(FAV_PROMPT_STORE)) {
+        db.createObjectStore(FAV_PROMPT_STORE, { keyPath: 'id' })
       }
     }
 
@@ -387,4 +416,157 @@ export function isItemInWorkspace(
   }
 
   return false
+}
+
+// ---------------------------------------------------------------------------
+// Workbench favorites: reusable reference images and prompts. Same database,
+// separate stores; a dedicated listener set keeps favorite mutations from
+// re-reading the (potentially large) gallery history.
+// ---------------------------------------------------------------------------
+
+const favoriteListeners = new Set<() => void>()
+
+function notifyFavorites(): void {
+  for (const listener of favoriteListeners) {
+    try {
+      listener()
+    } catch (err) {
+      console.error('[dsh-image-gen] Favorites listener error:', err)
+    }
+  }
+}
+
+/** Subscribe to favorites mutations (insert/delete). */
+export function subscribeFavorites(listener: () => void): () => void {
+  favoriteListeners.add(listener)
+  return () => {
+    favoriteListeners.delete(listener)
+  }
+}
+
+/** Stable base36 id for a favorite prompt; identical trimmed text dedupes. */
+function promptIdOf(text: string): string {
+  let hash = 5381
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0
+  }
+  return `p${(hash >>> 0).toString(36)}-${text.length.toString(36)}`
+}
+
+function readAll<T>(db: IDBDatabase, storeName: string): Promise<T[]> {
+  return new Promise<T[]>((resolve, reject) => {
+    const req = db.transaction(storeName, 'readonly').objectStore(storeName).openCursor()
+    const rows: T[] = []
+    req.onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
+      if (cursor) {
+        rows.push(cursor.value as T)
+        cursor.continue()
+      } else {
+        resolve(rows)
+      }
+    }
+    req.onerror = () => reject(req.error)
+  })
+}
+
+/**
+ * Keep one reference image in the favorites rail.
+ * @returns false when the write failed (IndexedDB unavailable or record lost).
+ */
+export async function saveFavoriteImage(entry: Omit<FavoriteImage, 'addedAt'> & { addedAt?: number }): Promise<boolean> {
+  try {
+    const db = await getDB()
+    await new Promise<void>((resolve, reject) => {
+      const req = db.transaction(FAV_IMAGE_STORE, 'readwrite').objectStore(FAV_IMAGE_STORE).put({ addedAt: Date.now(), ...entry })
+      req.onsuccess = () => resolve()
+      req.onerror = () => reject(req.error)
+    })
+    notifyFavorites()
+    return true
+  } catch (err) {
+    console.warn('[dsh-image-gen] Failed to save favorite image:', err)
+    return false
+  }
+}
+
+/** Reference-image favorites, newest first. */
+export async function getFavoriteImages(): Promise<FavoriteImage[]> {
+  try {
+    const db = await getDB()
+    const rows = await readAll<FavoriteImage>(db, FAV_IMAGE_STORE)
+    return rows.sort((a, b) => b.addedAt - a.addedAt)
+  } catch (err) {
+    console.warn('[dsh-image-gen] Failed to read favorite images:', err)
+    return []
+  }
+}
+
+/** Drop one reference-image favorite. */
+export async function deleteFavoriteImage(id: string): Promise<void> {
+  try {
+    const db = await getDB()
+    await new Promise<void>((resolve, reject) => {
+      const req = db.transaction(FAV_IMAGE_STORE, 'readwrite').objectStore(FAV_IMAGE_STORE).delete(id)
+      req.onsuccess = () => resolve()
+      req.onerror = () => reject(req.error)
+    })
+    notifyFavorites()
+  } catch (err) {
+    console.warn('[dsh-image-gen] Failed to delete favorite image:', err)
+  }
+}
+
+/**
+ * Keep one prompt in the favorites rail; identical trimmed text overwrites
+ * (one record per distinct prompt).
+ * @returns false when the write failed.
+ */
+export async function saveFavoritePrompt(text: string): Promise<boolean> {
+  const trimmed = text.trim()
+  if (trimmed.length === 0) return false
+  try {
+    const db = await getDB()
+    await new Promise<void>((resolve, reject) => {
+      const req = db.transaction(FAV_PROMPT_STORE, 'readwrite').objectStore(FAV_PROMPT_STORE).put({
+        id: promptIdOf(trimmed),
+        text: trimmed,
+        addedAt: Date.now(),
+      })
+      req.onsuccess = () => resolve()
+      req.onerror = () => reject(req.error)
+    })
+    notifyFavorites()
+    return true
+  } catch (err) {
+    console.warn('[dsh-image-gen] Failed to save favorite prompt:', err)
+    return false
+  }
+}
+
+/** Prompt favorites, newest first. */
+export async function getFavoritePrompts(): Promise<FavoritePrompt[]> {
+  try {
+    const db = await getDB()
+    const rows = await readAll<FavoritePrompt>(db, FAV_PROMPT_STORE)
+    return rows.sort((a, b) => b.addedAt - a.addedAt)
+  } catch (err) {
+    console.warn('[dsh-image-gen] Failed to read favorite prompts:', err)
+    return []
+  }
+}
+
+/** Drop one prompt favorite. */
+export async function deleteFavoritePrompt(id: string): Promise<void> {
+  try {
+    const db = await getDB()
+    await new Promise<void>((resolve, reject) => {
+      const req = db.transaction(FAV_PROMPT_STORE, 'readwrite').objectStore(FAV_PROMPT_STORE).delete(id)
+      req.onsuccess = () => resolve()
+      req.onerror = () => reject(req.error)
+    })
+    notifyFavorites()
+  } catch (err) {
+    console.warn('[dsh-image-gen] Failed to delete favorite prompt:', err)
+  }
 }
