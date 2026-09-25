@@ -60,8 +60,8 @@ const COPY = {
   zh: {
     title: '云端生图工作台', configured: 'API 已配置', unconfigured: '未配置', recent: '最近生成', empty: '暂无生成历史',
     railTabRecent: '最新生成', railTabFavorites: '收藏', favImages: '收藏图片', favPrompts: '收藏提示词',
-    favEmptyImages: '收藏的参考图会显示在这里', favEmptyPrompts: '收藏的提示词会显示在这里',
-    favoritePrompt: '收藏提示词', favoriteRefs: '收藏参考图', favPromptSaved: '已收藏提示词', favRefsSaved: '已收藏 {count} 张参考图',
+    favEmptyImages: '在图生图参考图区点「☆ 收藏参考图」后，图片会显示在这里', favEmptyPrompts: '点提示词输入框旁的「☆ 收藏」后，提示词会显示在这里',
+    favoritePrompt: '收藏提示词', favoriteRefs: '收藏参考图', favActionShort: '收藏', favPromptSaved: '已收藏提示词', favRefsSaved: '已收藏 {count} 张参考图',
     favPromptApplied: '已填入提示词', favRefApplied: '已加入参考图', favSaveFailed: '收藏失败，请重试',
     generate: '文生图', edit: '图生图', reference: '参考图', optional: '选填', upload: '点击或拖拽图片到此处',
     uploadHint: '支持 JPG / PNG / WebP / GIF，最大 10MB（最多 5 张）', prompt: '提示词 Prompt', clear: '清空', promptPlaceholder: '描述主体、构图、风格、光线与需要出现的文字…（支持 Ctrl+Enter 快捷生成）',
@@ -95,8 +95,8 @@ const COPY = {
   en: {
     title: 'Cloud Image Studio', configured: 'API configured', unconfigured: 'Not configured', recent: 'Recent generations', empty: 'No generated images yet',
     railTabRecent: 'Latest', railTabFavorites: 'Favorites', favImages: 'Favorite images', favPrompts: 'Favorite prompts',
-    favEmptyImages: 'Saved reference images appear here', favEmptyPrompts: 'Saved prompts appear here',
-    favoritePrompt: 'Save prompt', favoriteRefs: 'Save reference images', favPromptSaved: 'Prompt saved', favRefsSaved: 'Saved {count} reference images',
+    favEmptyImages: 'Click ☆ Save reference images in the edit-mode reference area', favEmptyPrompts: 'Click ☆ Save beside the prompt box',
+    favoritePrompt: 'Save prompt', favoriteRefs: 'Save reference images', favActionShort: 'Save', favPromptSaved: 'Prompt saved', favRefsSaved: 'Saved {count} reference images',
     favPromptApplied: 'Prompt applied', favRefApplied: 'Reference added', favSaveFailed: 'Could not save; please retry',
     generate: 'Text to image', edit: 'Image to image', reference: 'Reference image', optional: 'optional', upload: 'Click or drop images here',
     uploadHint: 'JPG / PNG / WebP / GIF, up to 10MB (max 5)', prompt: 'Prompt', clear: 'Clear', promptPlaceholder: 'Describe the subject, composition, style, lighting, and exact text… (Ctrl+Enter to generate)',
@@ -548,6 +548,10 @@ export const StudioView: FC<{
       return
     }
     if (await saveFavoritePrompt(prompt)) {
+      // Narrow seats auto-fold the rail; showing where the favorite landed
+      // outranks the fold, so expand it and stop the auto-folding.
+      railToggledByUserRef.current = true
+      setSidebarCollapsed(false)
       setRailTab('favorites')
       flash(t('favPromptSaved'))
     } else {
@@ -577,6 +581,8 @@ export const StudioView: FC<{
       setError(t('favSaveFailed'))
       return
     }
+    railToggledByUserRef.current = true
+    setSidebarCollapsed(false)
     setRailTab('favorites')
     flash(t('favRefsSaved', { count: String(saved) }))
   }
@@ -1492,7 +1498,7 @@ export const StudioView: FC<{
                   </label>
                   {references.length > 0 && (
                     <>
-                      <button type="button" className="dsh-ig-fav-save-btn" onClick={() => void handleFavoriteReferences()} title={t('favoriteRefs')}><Star size={11} /></button>
+                      <button type="button" className="dsh-ig-fav-save-btn" onClick={() => void handleFavoriteReferences()} title={t('favoriteRefs')}><Star size={12} />{t('favoriteRefs')}</button>
                       <button type="button" onClick={clearAllReferences}>
                         {t('clear')}
                       </button>
@@ -1558,7 +1564,7 @@ export const StudioView: FC<{
               </div>
             )}
             <div className="dsh-ig-field">
-              <div className="dsh-ig-field-label"><label htmlFor="dsh-ig-prompt">{t('prompt')} <b>*</b></label><span><button type="button" className="dsh-ig-find-inspiration" onClick={onOpenInspiration}><Sparkles size={11} />{t('findInspiration')}</button><button type="button" className="dsh-ig-fav-save-btn" onClick={() => void handleFavoritePrompt()} title={t('favoritePrompt')}><Star size={11} /></button><button type="button" onClick={() => setPrompt('')}>{t('clear')}</button></span></div>
+              <div className="dsh-ig-field-label"><label htmlFor="dsh-ig-prompt">{t('prompt')} <b>*</b></label><span><button type="button" className="dsh-ig-find-inspiration" onClick={onOpenInspiration}><Sparkles size={11} />{t('findInspiration')}</button><button type="button" className="dsh-ig-fav-save-btn" onClick={() => void handleFavoritePrompt()} title={t('favoritePrompt')}><Star size={12} />{t('favActionShort')}</button><button type="button" onClick={() => setPrompt('')}>{t('clear')}</button></span></div>
               <textarea
                 id="dsh-ig-prompt"
                 value={prompt}
