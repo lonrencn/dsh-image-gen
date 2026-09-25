@@ -22,6 +22,7 @@ import {
   PanelRight,
   PanelRightClose,
   PencilLine,
+  FolderInput,
   Plus,
   RefreshCw,
   Sparkles,
@@ -33,7 +34,7 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import { DELETE_ROUTE, SAVE_WORKSPACE_ROUTE, STUDIO_ROUTE, isSubscriptionProvider, type CloudImageProvider, type StudioConfigResponse, type StudioGenerateResponse, type StudioGeneratedItem, type StudioProvider, type StudioProviderProfile, type StudioReference } from '../shared.js'
-import { deleteGalleryItem, getGalleryItems, saveGalleryItem, subscribeGallery, toggleFavoriteGalleryItem, type GalleryItem, saveFavoriteImage, getFavoriteImages, deleteFavoriteImage, saveFavoritePrompt, getFavoritePrompts, deleteFavoritePrompt, subscribeFavorites, type FavoriteImage, type FavoritePrompt } from './gallery-store.js'
+import { deleteGalleryItem, getGalleryItems, saveGalleryItem, subscribeGallery, toggleFavoriteGalleryItem, type GalleryItem, saveFavoriteImage, getFavoriteImages, deleteFavoriteImage, saveFavoritePrompt, getFavoritePrompts, deleteFavoritePrompt, subscribeFavorites, addFavoriteFolder, getFavoriteFolders, deleteFavoriteFolder, moveFavoriteImage, moveFavoritePrompt, updateFavoritePrompt, type FavoriteImage, type FavoritePrompt, type FavoriteFolder } from './gallery-store.js'
 import { evictAttachmentCache, fetchAttachmentBlob } from './image-cache.js'
 import { copyImageBlob, downloadBlobUrl, formatRelativeTime } from './browser-image-utils.js'
 import { buildComparisonTargets, initialComparisonProviders } from './multi-model-compare.js'
@@ -60,6 +61,9 @@ const COPY = {
   zh: {
     title: '云端生图工作台', configured: 'API 已配置', unconfigured: '未配置', recent: '最近生成', empty: '暂无生成历史',
     railTabRecent: '最新生成', railTabFavorites: '收藏', favImages: '收藏图片', favPrompts: '收藏提示词',
+    favFolderAll: '全部', favNewFolder: '新建文件夹', favFolderPlaceholder: '文件夹名称', favCreate: '创建', favCancel: '取消',
+    favMoveTo: '移动到文件夹', favNoFolder: '未分组', favMove: '移动', favDeleteFolder: '删除文件夹',
+    favEditPrompt: '编辑提示词', favUse: '使用', favSave: '保存', favEditPromptPlaceholder: '输入提示词内容…', favFolder: '所属文件夹',
     favEmptyImages: '在图生图参考图区点「☆ 收藏参考图」后，图片会显示在这里', favEmptyPrompts: '点提示词输入框旁的「☆ 收藏」后，提示词会显示在这里',
     favoritePrompt: '收藏提示词', favoriteRefs: '收藏参考图', favActionShort: '收藏', favPromptSaved: '已收藏提示词', favRefsSaved: '已收藏 {count} 张参考图',
     favPromptApplied: '已填入提示词', favRefApplied: '已加入参考图', favSaveFailed: '收藏失败，请重试',
@@ -95,6 +99,9 @@ const COPY = {
   en: {
     title: 'Cloud Image Studio', configured: 'API configured', unconfigured: 'Not configured', recent: 'Recent generations', empty: 'No generated images yet',
     railTabRecent: 'Latest', railTabFavorites: 'Favorites', favImages: 'Favorite images', favPrompts: 'Favorite prompts',
+    favFolderAll: 'All', favNewFolder: 'New folder', favFolderPlaceholder: 'Folder name', favCreate: 'Create', favCancel: 'Cancel',
+    favMoveTo: 'Move to folder', favNoFolder: 'Unfiled', favMove: 'Move', favDeleteFolder: 'Delete folder',
+    favEditPrompt: 'Edit prompt', favUse: 'Use', favSave: 'Save', favEditPromptPlaceholder: 'Prompt text…', favFolder: 'Folder',
     favEmptyImages: 'Click ☆ Save reference images in the edit-mode reference area', favEmptyPrompts: 'Click ☆ Save beside the prompt box',
     favoritePrompt: 'Save prompt', favoriteRefs: 'Save reference images', favActionShort: 'Save', favPromptSaved: 'Prompt saved', favRefsSaved: 'Saved {count} reference images',
     favPromptApplied: 'Prompt applied', favRefApplied: 'Reference added', favSaveFailed: 'Could not save; please retry',
@@ -172,6 +179,15 @@ export const StudioView: FC<{
   const [railTab, setRailTab] = useState<'recent' | 'favorites'>('recent')
   const [favImages, setFavImages] = useState<FavoriteImage[]>([])
   const [favPrompts, setFavPrompts] = useState<FavoritePrompt[]>([])
+  const [favFolders, setFavFolders] = useState<FavoriteFolder[]>([])
+  const [activeImgFolder, setActiveImgFolder] = useState('')
+  const [activePromptFolder, setActivePromptFolder] = useState('')
+  const [folderDraft, setFolderDraft] = useState<{ kind: 'image' | 'prompt' } | null>(null)
+  const [folderDraftName, setFolderDraftName] = useState('')
+  const [editingPrompt, setEditingPrompt] = useState<FavoritePrompt | null>(null)
+  const [editPromptText, setEditPromptText] = useState('')
+  const [editPromptFolder, setEditPromptFolder] = useState('')
+  const [movingFav, setMovingFav] = useState<{ kind: 'image' | 'prompt', id: string, folderId: string | undefined } | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   /** Manual-only collapse for the right generate form; the form stays put in
    *  narrow seats because it is the primary generation surface. Starts folded
@@ -383,10 +399,11 @@ export const StudioView: FC<{
 
   useEffect(() => {
     let mounted = true
-    const load = () => void Promise.all([getFavoriteImages(), getFavoritePrompts()]).then(([images, prompts]) => {
+    const load = () => void Promise.all([getFavoriteImages(), getFavoritePrompts(), getFavoriteFolders()]).then(([images, prompts, folders]) => {
       if (!mounted) return
       setFavImages(images)
       setFavPrompts(prompts)
+      setFavFolders(folders)
     })
     load()
     const unsubscribe = subscribeFavorites(load)
@@ -630,6 +647,25 @@ export const StudioView: FC<{
   }
 
   /** Fill the prompt box from one favorite prompt. */
+  const createFavFolder = async (kind: 'image' | 'prompt') => {
+    const folder = await addFavoriteFolder(kind, folderDraftName)
+    if (folder === null) { flash(t('favSaveFailed')); return }
+    setFolderDraft(null)
+    setFolderDraftName('')
+  }
+
+  const openPromptEditor = (fav: FavoritePrompt) => {
+    setEditingPrompt(fav)
+    setEditPromptText(fav.text)
+    setEditPromptFolder(fav.folderId ?? '')
+  }
+
+  const doMoveFavorite = (folderId: string | undefined) => {
+    if (movingFav === null) return
+    if (movingFav.kind === 'image') void moveFavoriteImage(movingFav.id, folderId)
+    else void moveFavoritePrompt(movingFav.id, folderId)
+  }
+
   const applyFavoritePrompt = (fav: FavoritePrompt) => {
     setPrompt(fav.text)
     flash(t('favPromptApplied'))
@@ -1245,37 +1281,111 @@ export const StudioView: FC<{
               </div>
             ) : (
               <div className="dsh-ig-fav-scroll">
-                <div className="dsh-ig-fav-section-label">{t('favImages')}</div>
-                {favImages.length === 0 ? (
-                  <div className="dsh-ig-fav-empty"><ImagePlus size={18} /><span>{t('favEmptyImages')}</span></div>
-                ) : (
-                  <div className="dsh-ig-fav-grid">
-                    {favImages.map(fav => (
+                <div className="dsh-ig-fav-section-label">
+                  <span>{t('favImages')}</span>
+                  <button type="button" className="dsh-ig-fav-folder-add" onClick={() => { setFolderDraft({ kind: 'image' }); setFolderDraftName('') }} title={t('favNewFolder')}>＋</button>
+                </div>
+                <FavoriteFolderBar
+                  folders={favFolders.filter(folder => folder.kind === 'image')}
+                  active={activeImgFolder}
+                  onSelect={id => setActiveImgFolder(id === activeImgFolder ? '' : id)}
+                  onDelete={id => void deleteFavoriteFolder(id)}
+                  deleteLabel={t('favDeleteFolder')}
+                />
+                {folderDraft?.kind === 'image' && (
+                  <div className="dsh-ig-fav-folder-draft">
+                    <input value={folderDraftName} placeholder={t('favFolderPlaceholder')} onChange={e => setFolderDraftName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void createFavFolder('image') }} />
+                    <button type="button" onClick={() => void createFavFolder('image')}>{t('favCreate')}</button>
+                    <button type="button" onClick={() => setFolderDraft(null)}>{t('favCancel')}</button>
+                  </div>
+                )}
+                {(() => {
+                  const list = favImages.filter(fav => activeImgFolder === '' || fav.folderId === activeImgFolder)
+                  if (list.length === 0) return <div className="dsh-ig-fav-empty"><ImagePlus size={18} /><span>{t('favEmptyImages')}</span></div>
+                  return <div className="dsh-ig-fav-grid">
+                    {list.map(fav => (
                       <FavoriteImageTile
                         key={fav.id}
                         favorite={fav}
                         onApply={() => void applyFavoriteImage(fav)}
                         onDelete={() => void deleteFavoriteImage(fav.id)}
+                        onMove={() => setMovingFav({ kind: 'image', id: fav.id, folderId: fav.folderId })}
                       />
                     ))}
                   </div>
+                })()}
+                <div className="dsh-ig-fav-section-label">
+                  <span>{t('favPrompts')}</span>
+                  <button type="button" className="dsh-ig-fav-folder-add" onClick={() => { setFolderDraft({ kind: 'prompt' }); setFolderDraftName('') }} title={t('favNewFolder')}>＋</button>
+                </div>
+                <FavoriteFolderBar
+                  folders={favFolders.filter(folder => folder.kind === 'prompt')}
+                  active={activePromptFolder}
+                  onSelect={id => setActivePromptFolder(id === activePromptFolder ? '' : id)}
+                  onDelete={id => void deleteFavoriteFolder(id)}
+                  deleteLabel={t('favDeleteFolder')}
+                />
+                {folderDraft?.kind === 'prompt' && (
+                  <div className="dsh-ig-fav-folder-draft">
+                    <input value={folderDraftName} placeholder={t('favFolderPlaceholder')} onChange={e => setFolderDraftName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void createFavFolder('prompt') }} />
+                    <button type="button" onClick={() => void createFavFolder('prompt')}>{t('favCreate')}</button>
+                    <button type="button" onClick={() => setFolderDraft(null)}>{t('favCancel')}</button>
+                  </div>
                 )}
-                <div className="dsh-ig-fav-section-label">{t('favPrompts')}</div>
-                {favPrompts.length === 0 ? (
-                  <div className="dsh-ig-fav-empty"><PencilLine size={18} /><span>{t('favEmptyPrompts')}</span></div>
-                ) : (
-                  <div className="dsh-ig-fav-prompts">
-                    {favPrompts.map(fav => (
+                {(() => {
+                  const list = favPrompts.filter(fav => activePromptFolder === '' || fav.folderId === activePromptFolder)
+                  if (list.length === 0) return <div className="dsh-ig-fav-empty"><PencilLine size={18} /><span>{t('favEmptyPrompts')}</span></div>
+                  return <div className="dsh-ig-fav-prompts">
+                    {list.map(fav => (
                       <div key={fav.id} className="dsh-ig-fav-prompt">
-                        <button type="button" className="dsh-ig-fav-prompt-text" title={fav.text} onClick={() => applyFavoritePrompt(fav)}>{fav.text}</button>
+                        <button type="button" className="dsh-ig-fav-prompt-text" title={fav.text} onClick={() => openPromptEditor(fav)}>{fav.text}</button>
                         <button type="button" className="dsh-ig-fav-del" title={t('remove')} onClick={() => void deleteFavoritePrompt(fav.id)}><X size={11} /></button>
                       </div>
                     ))}
                   </div>
-                )}
+                })()}
               </div>
             )}
           </aside>
+        )}
+
+        {(editingPrompt !== null || movingFav !== null) && (
+          <div className="dsh-ig-fav-dialog-wrap" onClick={() => { setEditingPrompt(null); setMovingFav(null) }}>
+            <div className="dsh-ig-fav-dialog" onClick={e => e.stopPropagation()}>
+              {editingPrompt !== null && (
+                <>
+                  <div className="dsh-ig-fav-dialog-title">{t('favEditPrompt')}</div>
+                  <textarea className="dsh-ig-fav-dialog-textarea" value={editPromptText} placeholder={t('favEditPromptPlaceholder')} onChange={e => setEditPromptText(e.target.value)} rows={5} />
+                  <label className="dsh-ig-fav-dialog-folder-label">{t('favFolder')}
+                    <select value={editPromptFolder} onChange={e => setEditPromptFolder(e.target.value)}>
+                      <option value="">{t('favNoFolder')}</option>
+                      {favFolders.filter(folder => folder.kind === 'prompt').map(folder => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+                    </select>
+                  </label>
+                  <div className="dsh-ig-fav-dialog-actions">
+                    <button type="button" className="is-primary" onClick={() => { void updateFavoritePrompt(editingPrompt.id, editPromptText).then(ok => { if (ok) void moveFavoritePrompt(editingPrompt.id, editPromptFolder === '' ? undefined : editPromptFolder) }); setEditingPrompt(null) }}>{t('favSave')}</button>
+                    <button type="button" onClick={() => { applyFavoritePrompt({ ...editingPrompt, text: editPromptText }); setEditingPrompt(null) }}>{t('favUse')}</button>
+                    <button type="button" onClick={() => { setMovingFav({ kind: 'prompt', id: editingPrompt.id, folderId: editingPrompt.folderId }); setEditingPrompt(null) }}>{t('favMove')}</button>
+                    <button type="button" onClick={() => setEditingPrompt(null)}>{t('favCancel')}</button>
+                  </div>
+                </>
+              )}
+              {editingPrompt === null && movingFav !== null && (
+                <>
+                  <div className="dsh-ig-fav-dialog-title">{t('favMoveTo')}</div>
+                  <div className="dsh-ig-fav-dialog-folders">
+                    <button type="button" onClick={() => { void doMoveFavorite(undefined); setMovingFav(null) }}>{t('favNoFolder')}</button>
+                    {favFolders.filter(folder => folder.kind === movingFav.kind).map(folder => (
+                      <button type="button" key={folder.id} className={movingFav.folderId === folder.id ? 'is-current' : ''} onClick={() => { void doMoveFavorite(folder.id); setMovingFav(null) }}>{folder.name}</button>
+                    ))}
+                  </div>
+                  <div className="dsh-ig-fav-dialog-actions">
+                    <button type="button" onClick={() => setMovingFav(null)}>{t('favCancel')}</button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         )}
 
         <main className="dsh-ig-canvas-column">
@@ -1966,7 +2076,7 @@ const RecentItem: FC<{ item: GalleryItem; active: boolean; onClick(): void }> = 
 }
 
 /** One favorites-rail reference tile: thumbnail with hover delete. */
-const FavoriteImageTile: FC<{ favorite: FavoriteImage; onApply(): void; onDelete(): void }> = ({ favorite, onApply, onDelete }) => {
+const FavoriteImageTile: FC<{ favorite: FavoriteImage; onApply(): void; onDelete(): void; onMove(): void }> = ({ favorite, onApply, onDelete, onMove }) => {
   const attachmentUrl = useAttachmentImage(favorite.attachment).url
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   useEffect(() => {
@@ -1981,7 +2091,22 @@ const FavoriteImageTile: FC<{ favorite: FavoriteImage; onApply(): void; onDelete
       <button type="button" className="dsh-ig-recent-item" onClick={onApply} title={favorite.name}>
         <div className="dsh-ig-recent-thumb">{url !== null ? <img src={url} alt="" loading="lazy" /> : <ImagePlus size={18} />}</div>
       </button>
+      <button type="button" className="dsh-ig-fav-move" onClick={onMove} title={favorite.name}><FolderInput size={11} /></button>
       <button type="button" className="dsh-ig-fav-del" onClick={onDelete} title={favorite.name}><X size={11} /></button>
+    </div>
+  )
+}
+
+const FavoriteFolderBar: FC<{ folders: FavoriteFolder[]; active: string; onSelect(id: string): void; onDelete(id: string): void; deleteLabel: string }> = ({ folders, active, onSelect, onDelete, deleteLabel }) => {
+  if (folders.length === 0) return null
+  return (
+    <div className="dsh-ig-fav-folders">
+      {folders.map(folder => (
+        <span key={folder.id} className={`dsh-ig-fav-folder-chip ${active === folder.id ? 'is-active' : ''}`}>
+          <button type="button" onClick={() => onSelect(folder.id)}>{folder.name}</button>
+          <button type="button" className="dsh-ig-fav-folder-del" title={deleteLabel} onClick={() => onDelete(folder.id)}><X size={9} /></button>
+        </span>
+      ))}
     </div>
   )
 }

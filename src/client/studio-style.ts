@@ -14,6 +14,31 @@ body[data-ds-dark-theme] .dsh-ig-workbench{--ig-danger:#f08c8c;--ig-warn:#e5b76a
 .dsh-ig-collapse-btn:hover{border-color:var(--ig-line);background:var(--ig-soft);color:var(--ig-fg)}
 .dsh-ig-recent-scroll{flex:1 1 0;height:0;padding:8px;overflow-x:hidden;overflow-y:auto;min-height:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:6px;align-content:start}.dsh-ig-recent-empty{min-height:180px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:10px;color:var(--ig-fg-cap);text-align:center;font-size:12px;grid-column:1/-1}
 .dsh-ig-fav-tile{position:relative}
+.dsh-ig-fav-folder-add{margin-left:auto;padding:0 5px;border:0;background:transparent;color:var(--ig-fg-3);font-size:12px;line-height:16px;cursor:pointer;border-radius:4px}.dsh-ig-fav-folder-add:hover{color:var(--ig-blue);background:var(--ig-bg-thumb)}
+.dsh-ig-fav-folders{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 6px}
+.dsh-ig-fav-folder-chip{display:inline-flex;align-items:center;gap:2px;padding:2px 6px;border:1px solid var(--ig-line);border-radius:999px;background:transparent;color:var(--ig-fg-3);font-size:10.5px}
+.dsh-ig-fav-folder-chip.is-active{border-color:var(--ig-blue-line);color:var(--ig-blue);background:color-mix(in srgb,var(--ig-blue) 10%,transparent)}
+.dsh-ig-fav-folder-chip>button:first-child{border:0;background:transparent;color:inherit;font-size:inherit;padding:0;cursor:pointer}
+.dsh-ig-fav-folder-del{border:0;background:transparent;color:var(--ig-fg-3);cursor:pointer;display:inline-flex;padding:0}.dsh-ig-fav-folder-del:hover{color:var(--ig-danger)}
+.dsh-ig-fav-folder-draft{display:flex;gap:4px;margin:2px 0 6px}
+.dsh-ig-fav-folder-draft input{flex:1;min-width:0;padding:3px 6px;border:1px solid var(--ig-line);border-radius:5px;background:var(--ig-bg);color:var(--ig-fg);font-size:11px}
+.dsh-ig-fav-folder-draft button{padding:3px 8px;border:1px solid var(--ig-line);border-radius:5px;background:transparent;color:var(--ig-fg-2);font-size:11px;cursor:pointer}
+.dsh-ig-fav-folder-draft button:first-of-type{border-color:var(--ig-blue-line);color:var(--ig-blue)}
+.dsh-ig-fav-move{position:absolute;left:4px;top:4px;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:0;border-radius:4px;background:color-mix(in srgb,var(--ig-bg) 78%,transparent);color:var(--ig-fg-2);cursor:pointer;opacity:0;transition:opacity .12s}
+.dsh-ig-fav-tile:hover .dsh-ig-fav-move{opacity:1}
+.dsh-ig-fav-move:hover{color:var(--ig-blue)}
+.dsh-ig-fav-dialog-wrap{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:rgba(15,20,34,.45)}
+.dsh-ig-fav-dialog{width:min(420px,92vw);max-height:70vh;overflow:auto;padding:14px;border-radius:10px;background:var(--ig-bg-panel);border:1px solid var(--ig-line);box-shadow:0 12px 32px rgba(10,14,26,.25);display:flex;flex-direction:column;gap:10px}
+.dsh-ig-fav-dialog-title{font-size:12.5px;font-weight:600;color:var(--ig-fg)}
+.dsh-ig-fav-dialog-textarea{width:100%;resize:vertical;padding:8px;border:1px solid var(--ig-line);border-radius:6px;background:var(--ig-bg);color:var(--ig-fg);font-size:12px;line-height:1.5}
+.dsh-ig-fav-dialog-folder-label{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ig-fg-2)}
+.dsh-ig-fav-dialog-folder-label select{flex:1;padding:4px 6px;border:1px solid var(--ig-line);border-radius:5px;background:var(--ig-bg);color:var(--ig-fg);font-size:11.5px}
+.dsh-ig-fav-dialog-actions{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.dsh-ig-fav-dialog-actions button{padding:5px 12px;border:1px solid var(--ig-line);border-radius:6px;background:transparent;color:var(--ig-fg-2);font-size:12px;cursor:pointer}
+.dsh-ig-fav-dialog-actions button.is-primary{border-color:var(--ig-blue);background:var(--ig-blue);color:#fff}
+.dsh-ig-fav-dialog-folders{display:flex;flex-direction:column;gap:4px}
+.dsh-ig-fav-dialog-folders button{text-align:left;padding:6px 10px;border:1px solid var(--ig-line);border-radius:6px;background:transparent;color:var(--ig-fg-2);font-size:12px;cursor:pointer}
+.dsh-ig-fav-dialog-folders button:hover,.dsh-ig-fav-dialog-folders button.is-current{border-color:var(--ig-blue-line);color:var(--ig-blue);background:color-mix(in srgb,var(--ig-blue) 8%,transparent)}
 .dsh-ig-fav-del{position:absolute;top:-5px;right:-5px;width:18px;height:18px;display:none;align-items:center;justify-content:center;padding:0;border:1px solid var(--ig-line);border-radius:50%;background:var(--ig-bg);color:var(--ig-fg-3);cursor:pointer;z-index:2}.dsh-ig-fav-del:hover{color:#d5495c;border-color:#e6a3ad}.dsh-ig-fav-tile:hover .dsh-ig-fav-del,.dsh-ig-fav-prompt:hover .dsh-ig-fav-del{display:inline-flex}
 .dsh-ig-fav-prompt{position:relative;display:flex;align-items:flex-start;gap:2px}
 .dsh-ig-fav-prompt-text{flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-align:left;padding:5px 8px;border:1px solid var(--ig-line);border-radius:6px;background:transparent;font-size:11px;line-height:1.45;color:var(--ig-fg);cursor:pointer;transition:all .15s}.dsh-ig-fav-prompt-text:hover{border-color:var(--ig-blue-line);background:var(--ig-soft)}
