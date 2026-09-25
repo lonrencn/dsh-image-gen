@@ -32,9 +32,16 @@ import {
   bulkSetFavoriteGalleryItems,
   toggleFavoriteGalleryItem,
   isItemInWorkspace,
+  getFavoriteImages,
+  getFavoritePrompts,
+  deleteFavoriteImage,
+  deleteFavoritePrompt,
+  subscribeFavorites,
   type GalleryItem,
+  type FavoriteImage,
+  type FavoritePrompt,
 } from './gallery-store.js'
-import { StudioView } from './studio-view.js'
+import { StudioView, FavoriteImageTile } from './studio-view.js'
 import { InspirationView } from './inspiration-view.js'
 import { evictAttachmentCache, fetchAttachmentBlob } from './image-cache.js'
 import { copyImageBlob, createZipBlob, downloadBlobUrl, type ZipFileInput } from './browser-image-utils.js'
@@ -83,6 +90,7 @@ const DICT = {
     emptyTitle: '暂无生图记录',
     emptyDesc: '在对话中让 Agent 生图后，生成的图片会自动收录到这里。',
     favEmptyTitle: '暂无收藏图片',
+    favRefsSection: '收藏参考图', favPromptsSection: '收藏提示词', favImagesSection: '收藏图片', remove: '删除',
     favEmptyDesc: '在图库中点击卡片右下角的 ♡ 按钮，即可将喜爱的图片收录到这里。',
     noMatchTitle: '未找到匹配结果',
     noMatchDesc: '尝试更换搜索关键词或调整筛选条件。',
@@ -192,6 +200,7 @@ const DICT = {
     emptyTitle: 'No images generated yet',
     emptyDesc: 'Images generated during conversations will automatically appear here.',
     favEmptyTitle: 'No favorite images yet',
+    favRefsSection: 'Favorite reference images', favPromptsSection: 'Favorite prompts', favImagesSection: 'Favorite images', remove: 'Remove',
     favEmptyDesc: 'Click the ♡ button on any card in the gallery to collect your favorite images here.',
     noMatchTitle: 'No matching images',
     noMatchDesc: 'Try a different search keyword or adjust filter criteria.',
@@ -507,6 +516,29 @@ export const GalleryViewTab: FC<GalleryViewTabProps> = (props) => {
   }, [])
 
   const clearStudioDraft = useCallback(() => setStudioDraft(undefined), [])
+
+  /** Favorite prompts / reference images, surfaced in the page-level favorites tab. */
+  const [favImages, setFavImages] = useState<FavoriteImage[]>([])
+  const [favPrompts, setFavPrompts] = useState<FavoritePrompt[]>([])
+  useEffect(() => {
+    let mounted = true
+    const load = () => void Promise.all([getFavoriteImages(), getFavoritePrompts()]).then(([images, prompts]) => {
+      if (!mounted) return
+      setFavImages(images)
+      setFavPrompts(prompts)
+    })
+    load()
+    const unsubscribe = subscribeFavorites(load)
+    return () => { mounted = false; unsubscribe() }
+  }, [])
+
+  const [studioRefDraft, setStudioRefDraft] = useState<string[] | undefined>(undefined)
+  /** Open the studio with one favorite image re-applied as a reference. */
+  const useFavoriteReference = useCallback((id: string) => {
+    setStudioRefDraft([id])
+    setActiveTab('studio')
+  }, [])
+  const clearStudioRefDraft = useCallback(() => setStudioRefDraft(undefined), [])
 
   // Hide chat input composer while browsing gallery/studio. Only in the
   // conversation-view variant: the sidebar variant shares the screen with the
@@ -1281,8 +1313,62 @@ export const GalleryViewTab: FC<GalleryViewTabProps> = (props) => {
 
       {/* 3. Main View Body */}
       <div className={`dsh-ig-gallery-page-body ${activeTab === 'studio' ? 'is-workbench' : ''}`}>
-        {activeTab === 'gallery' || activeTab === 'favorites' ? (
-          items.length === 0 ? (
+         {activeTab === 'gallery' || activeTab === 'favorites' ? (
+           activeTab === 'favorites' && (favImages.length > 0 || favPrompts.length > 0) ? (
+             <div className="dsh-ig-fav-page">
+               {favImages.length > 0 && (
+                 <section className="dsh-ig-fav-page-section">
+                   <div className="dsh-ig-fav-page-title">{t('favRefsSection')}</div>
+                   <div className="dsh-ig-fav-page-grid">
+                     {favImages.map(fav => (
+                       <FavoriteImageTile
+                         key={fav.id}
+                         favorite={fav}
+                         onApply={() => useFavoriteReference(fav.id)}
+                         onDelete={() => void deleteFavoriteImage(fav.id)}
+                       />
+                     ))}
+                   </div>
+                 </section>
+               )}
+               {favPrompts.length > 0 && (
+                 <section className="dsh-ig-fav-page-section">
+                   <div className="dsh-ig-fav-page-title">{t('favPromptsSection')}</div>
+                   <div className="dsh-ig-fav-page-prompts">
+                     {favPrompts.map(fav => (
+                       <div key={fav.id} className="dsh-ig-fav-prompt">
+                         <button type="button" className="dsh-ig-fav-prompt-text" title={fav.text} onClick={() => useInspirationPrompt(fav.text)}>{fav.text}</button>
+                         <button type="button" className="dsh-ig-fav-del" title={t('remove')} onClick={() => void deleteFavoritePrompt(fav.id)}><X size={11} /></button>
+                       </div>
+                     ))}
+                   </div>
+                 </section>
+               )}
+               {filteredItems.length > 0 && (
+                 <section className="dsh-ig-fav-page-section">
+                   <div className="dsh-ig-fav-page-title">{t('favImagesSection')}</div>
+                   <div className="dsh-ig-gallery-grid">
+                     {filteredItems.map((item, idx) => (
+                       <GalleryCard
+                         key={item.id}
+                         item={item}
+                         index={idx}
+                         isManageMode={isManageMode}
+                         isSelected={selectedIds.has(item.id)}
+                         t={t}
+                         onClick={(e, blob) => handleCardClick(item, idx, e, blob)}
+                         onToggleSelect={(e) => handleToggleSelect(item.id, idx, e)}
+                         onRequestDelete={() => requestSingleDelete(item)}
+                         onPreview={(blob) => openPreviewItem(item, blob)}
+                         onBlobLoaded={(b) => blobCache.set(item.id, b)}
+                         onToast={showToast}
+                       />
+                     ))}
+                   </div>
+                 </section>
+               )}
+             </div>
+           ) : items.length === 0 ? (
             <div className="dsh-ig-gallery-empty">
               <div className="dsh-ig-gallery-empty-icon">🖼️</div>
               <div className="dsh-ig-gallery-empty-title">{t('emptyTitle')}</div>
@@ -1323,7 +1409,7 @@ export const GalleryViewTab: FC<GalleryViewTabProps> = (props) => {
         ) : activeTab === 'inspiration' ? (
           <InspirationView locale={locale} onUsePrompt={useInspirationPrompt} />
         ) : (
-          <StudioView locale={locale} credentialEvents={credentialEvents} workspace={activeWorkspace} initialPrompt={studioDraft} initialCanvasSurface={initialCanvasSurface} showInfiniteCanvasHint={!inSidebar} onInitialPromptApplied={clearStudioDraft} onOpenInspiration={() => setActiveTab('inspiration')} />
+          <StudioView locale={locale} credentialEvents={credentialEvents} workspace={activeWorkspace} initialPrompt={studioDraft} initialCanvasSurface={initialCanvasSurface} showInfiniteCanvasHint={!inSidebar} onInitialPromptApplied={clearStudioDraft} initialFavoriteRefIds={studioRefDraft} onInitialRefsApplied={clearStudioRefDraft} onOpenInspiration={() => setActiveTab('inspiration')} />
         )}
       </div>
 

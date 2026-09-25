@@ -161,8 +161,11 @@ export const StudioView: FC<{
    */
   showInfiniteCanvasHint?: boolean
   onInitialPromptApplied?(): void
+  /** Favorite-image ids to re-apply as reference images once favorites load. */
+  initialFavoriteRefIds?: string[] | undefined
+  onInitialRefsApplied?(): void
   onOpenInspiration?(): void
-}> = ({ locale, credentialEvents, workspace, initialPrompt, initialCanvasSurface, showInfiniteCanvasHint, onInitialPromptApplied, onOpenInspiration }) => {
+}> = ({ locale, credentialEvents, workspace, initialPrompt, initialCanvasSurface, showInfiniteCanvasHint, onInitialPromptApplied, initialFavoriteRefIds, onInitialRefsApplied, onOpenInspiration }) => {
   const [lang, setLang] = useState<'zh' | 'en'>(() => locale?.getSnapshot?.().active?.startsWith('en') ? 'en' : 'zh')
   const [config, setConfig] = useState<StudioConfigResponse | null>(null)
   const [configLoading, setConfigLoading] = useState(true)
@@ -172,6 +175,8 @@ export const StudioView: FC<{
   const [railTab, setRailTab] = useState<'recent' | 'favorites'>('recent')
   const [favImages, setFavImages] = useState<FavoriteImage[]>([])
   const [favPrompts, setFavPrompts] = useState<FavoritePrompt[]>([])
+  /** True once the favorites stores have been read at least once. */
+  const [favImagesLoaded, setFavImagesLoaded] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   /** Manual-only collapse for the right generate form; the form stays put in
    *  narrow seats because it is the primary generation surface. Starts folded
@@ -377,6 +382,7 @@ export const StudioView: FC<{
       if (!mounted) return
       setFavImages(images)
       setFavPrompts(prompts)
+      setFavImagesLoaded(true)
     })
     load()
     const unsubscribe = subscribeFavorites(load)
@@ -618,6 +624,22 @@ export const StudioView: FC<{
     setPrompt(fav.text)
     flash(t('favPromptApplied'))
   }
+
+  // Re-apply favorite images requested by the parent view (favorites tab):
+  // wait for the first favorites read, then apply each id once.
+  const initialRefsDoneRef = useRef(false)
+  useEffect(() => {
+    if (initialRefsDoneRef.current || !favImagesLoaded || initialFavoriteRefIds === undefined || initialFavoriteRefIds.length === 0) return
+    initialRefsDoneRef.current = true
+    const ids = [...initialFavoriteRefIds]
+    onInitialRefsApplied?.()
+    void (async () => {
+      for (const id of ids) {
+        const fav = favImages.find(entry => entry.id === id)
+        if (fav !== undefined) await applyFavoriteImage(fav)
+      }
+    })()
+  }, [favImagesLoaded, favImages, initialFavoriteRefIds, onInitialRefsApplied, applyFavoriteImage])
 
   const addReferenceFiles = (fileList: FileList | File[] | null | undefined) => {
     if (!fileList || fileList.length === 0) return
@@ -1937,7 +1959,7 @@ const RecentItem: FC<{ item: GalleryItem; active: boolean; onClick(): void }> = 
 }
 
 /** One favorites-rail reference tile: thumbnail with hover delete. */
-const FavoriteImageTile: FC<{ favorite: FavoriteImage; onApply(): void; onDelete(): void }> = ({ favorite, onApply, onDelete }) => {
+export const FavoriteImageTile: FC<{ favorite: FavoriteImage; onApply(): void; onDelete(): void }> = ({ favorite, onApply, onDelete }) => {
   const attachmentUrl = useAttachmentImage(favorite.attachment).url
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   useEffect(() => {
