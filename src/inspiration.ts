@@ -170,6 +170,52 @@ export function findInspirationCase(catalog: ResolvedInspirationCatalog, sourceI
   return source?.cases.find(candidate => candidate.id === caseId)
 }
 
+/** One model-ready search hit: where the case lives plus its full reusable prompt. */
+export interface InspirationSearchHit {
+  sourceId: string
+  sourceLabel: string
+  id: string
+  title: string
+  category: string
+  prompt: string
+}
+
+export interface InspirationSearchRequest {
+  /** Substring matched case-insensitively against titles, prompts, categories, and style/scene tags; empty matches everything. */
+  query: string
+  /** Restrict the search to one source id. */
+  sourceId?: string | undefined
+  /** Restrict the search to one exact category name. */
+  category?: string | undefined
+  /** Maximum hits to return; defaults to 8, clamped to 1-20. */
+  limit?: number | undefined
+}
+
+export interface InspirationSearchResult {
+  /** Total matching cases before the limit; lets the caller refine instead of re-querying blindly. */
+  total: number
+  hits: InspirationSearchHit[]
+}
+
+const DEFAULT_INSPIRATION_SEARCH_HITS = 8
+const MAX_INSPIRATION_SEARCH_HITS = 20
+
+/** Search a resolved catalog for reusable prompts; bounded hits even with an empty query. */
+export function searchInspirationCases(catalog: ResolvedInspirationCatalog, request: InspirationSearchRequest): InspirationSearchResult {
+  const limit = Math.min(Math.max(request.limit ?? DEFAULT_INSPIRATION_SEARCH_HITS, 1), MAX_INSPIRATION_SEARCH_HITS)
+  const query = request.query.trim().toLowerCase()
+  const matches: InspirationSearchHit[] = []
+  for (const source of catalog.sources) {
+    if (request.sourceId !== undefined && source.id !== request.sourceId) continue
+    for (const item of source.cases) {
+      if (request.category !== undefined && item.category !== request.category) continue
+      if (query !== '' && ![item.title, item.prompt, item.category, ...item.styles, ...item.scenes].some(value => value.toLowerCase().includes(query))) continue
+      matches.push({ sourceId: source.id, sourceLabel: source.label, id: item.id, title: item.title, category: item.category, prompt: item.prompt })
+    }
+  }
+  return { total: matches.length, hits: matches.slice(0, limit) }
+}
+
 export const BUNDLED_INSPIRATION_CATALOG: ResolvedInspirationCatalog = {
   schemaVersion: 1,
   sources: [

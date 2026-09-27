@@ -55,7 +55,7 @@ describe('legacy dsh-settings (<= 0.1.1-rc.2) compatibility', () => {
     const { ctx, tools } = legacyHarness()
     apply(ctx, { provider: 'google', saveToWorkspace: false })
 
-    expect(tools.map(tool => tool.name)).toEqual(['canvas_state', 'view_canvas', 'generate_image', 'edit_image'])
+    expect(tools.map(tool => tool.name)).toEqual(['canvas_state', 'view_canvas', 'generate_image', 'edit_image', 'find_inspiration'])
     expect(installSettingsSection).toHaveBeenCalledTimes(1)
     const [relayCtx, ns, schema, entry] = vi.mocked(installSettingsSection).mock.calls[0] as unknown as [Context, string, unknown, unknown]
     expect(relayCtx).toBe(ctx)

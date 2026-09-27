@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BUNDLED_INSPIRATION_CATALOG, findInspirationCase, parseInspirationSnapshot, publicInspirationCatalog } from '../src/inspiration.js'
+import { BUNDLED_INSPIRATION_CATALOG, findInspirationCase, parseInspirationSnapshot, publicInspirationCatalog, searchInspirationCases } from '../src/inspiration.js'
 import { createInspirationRoute, drainCacheWrites } from '../src/inspiration-route.js'
 import { resolveActiveCatalog } from '../src/client/inspiration-view.js'
 
@@ -278,5 +278,25 @@ describe('resolveActiveCatalog cache arbitration', () => {
     expect(resolveActiveCatalog(undefined, baseCatalog)).toBe(baseCatalog)
     expect(resolveActiveCatalog(baseCatalog, undefined)).toBe(baseCatalog)
     expect(resolveActiveCatalog(undefined, undefined)).toBeUndefined()
+  })
+})
+
+describe('searchInspirationCases', () => {
+  it('matches prompts, categories, and tags across both bundled libraries', () => {
+    const result = searchInspirationCases(BUNDLED_INSPIRATION_CATALOG, { query: '信息图', category: '排版 · 信息图' })
+    expect(result.total).toBeGreaterThan(0)
+    for (const hit of result.hits) expect(hit.category).toBe('排版 · 信息图')
+    const english = searchInspirationCases(BUNDLED_INSPIRATION_CATALOG, { query: 'logo' })
+    expect(english.total).toBeGreaterThan(0)
+    expect(english.hits.some(hit => hit.sourceId === 'awesome-gpt-image-2')).toBe(true)
+  })
+
+  it('respects source, category, and limit bounds', () => {
+    const handdraw = searchInspirationCases(BUNDLED_INSPIRATION_CATALOG, { query: '', sourceId: 'handraw-style', limit: 3 })
+    expect(handdraw.hits).toHaveLength(3)
+    expect(handdraw.total).toBeGreaterThanOrEqual(435)
+    expect(searchInspirationCases(BUNDLED_INSPIRATION_CATALOG, { query: '', limit: 99 }).hits.length).toBeLessThanOrEqual(20)
+    const exact = searchInspirationCases(BUNDLED_INSPIRATION_CATALOG, { query: '', category: '单色 · 中性色系' })
+    expect(exact.hits.every(hit => hit.category === '单色 · 中性色系')).toBe(true)
   })
 })

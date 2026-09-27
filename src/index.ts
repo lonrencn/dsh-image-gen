@@ -21,6 +21,7 @@ import { editSeedreamImage } from './seedream.js'
 import { generateSubscriptionImage, registerSubscriptionRoutes, SubscriptionManager } from './subscription.js'
 import { CANVAS_STATE_ROUTE, IMAGE_GENERATION_NAMESPACE, IMAGE_PROVIDERS, INSPIRATION_ROUTE, STUDIO_ROUTE, TEST_CONNECTION_ROUTE, mergeComfyUIPrompt, type ImageProvider } from './shared.js'
 import { createInspirationRoute } from './inspiration-route.js'
+import { BUNDLED_INSPIRATION_CATALOG, searchInspirationCases } from './inspiration.js'
 import { generateFromStudio, describeStudio } from './studio.js'
 import { serveStudio } from './studio-route.js'
 import { serveTestConnection } from './test-route.js'
@@ -45,6 +46,12 @@ interface GeneratedValue {
   saveError?: string
   /** Concrete workflow seed, exposed by the ComfyUI provider for provenance. */
   seed?: number
+}
+
+/** Capped prompt hits for the find_inspiration tool; `total` counts all matches. */
+interface InspirationSearchValue {
+  total: number
+  hits: { sourceId: string; id: string; title: string; category: string; prompt: string }[]
 }
 
 /** Validate the untrusted per-call provider override from tool arguments. */
@@ -344,6 +351,44 @@ export function apply(ctx: Context, config: Config = {}): void {
       return saveGenerated(ctx, generated, active.provider, active.model, size, current(), exec, knownWorkspaceRoots)
     },
     presentResult: (_args, result) => imagePresentation(result),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'find_inspiration',
+    description: 'Search the bundled inspiration libraries for ready-made image prompts: the handdraw-style cookbook (styles 风格, layouts 排版, theme colors 单色) plus the awesome-gpt-image-2 example set. Use before generate_image whenever the user wants a specific art style, layout template, or theme color, mentions a numbered style like 风格 #123, or asks for reference or example prompts. Each hit carries a full prompt reusable with generate_image; handdraw style prompts contain a 主题 placeholder to replace with the user\'s topic, and may be combined with a layout and a theme-color prompt.',
+    parameters: {
+      query: { type: 'string', description: 'Keyword matched against titles, prompts, categories, and style/scene tags; Chinese or English. Omit to sample what a library offers.' },
+      category: { type: 'string', description: 'Optional exact category filter, for example "风格 · D 日本作者 / 当代插画体系", "排版 · 信息图", or "单色 · 中性色系".' },
+      source: { type: 'string', enum: ['handraw-style', 'awesome-gpt-image-2'], description: 'Optional single library to search; omit to search both.' },
+      limit: { type: 'integer', description: 'Optional maximum number of hits to return, 1-20 (default 8).' },
+    },
+    output: {
+      schema: {
+        type: 'object', additionalProperties: false, properties: {
+          total: { type: 'integer', required: true },
+          hits: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
+            sourceId: { type: 'string', required: true },
+            id: { type: 'string', required: true },
+            title: { type: 'string', required: true },
+            category: { type: 'string', required: true },
+            prompt: { type: 'string', required: true },
+          } } },
+        },
+      },
+      render: (_args: unknown, value: InspirationSearchValue) => [{
+        type: 'text' as const,
+        text: `${String(value.hits.length)} of ${String(value.total)} matching inspiration cases.\n\n${value.hits.map(hit => `[${hit.sourceId} · ${hit.category}] ${hit.title}\n${hit.prompt}`).join('\n\n')}`,
+      }],
+    },
+    async execute(args): Promise<InspirationSearchValue> {
+      const { total, hits } = searchInspirationCases(BUNDLED_INSPIRATION_CATALOG, {
+        query: args.query ?? '',
+        sourceId: args.source,
+        category: args.category,
+        limit: args.limit,
+      })
+      return { total, hits: hits.map(({ sourceId, id, title, category, prompt }) => ({ sourceId, id, title, category, prompt })) }
+    },
   }))
 }
 

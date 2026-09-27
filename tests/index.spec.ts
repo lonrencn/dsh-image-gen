@@ -77,7 +77,7 @@ describe('image tool registration', () => {
   it('installs the settings section through the modern service API', () => {
     const { ctx, tools, installSection } = harnessContext()
     apply(ctx, { provider: 'google', saveToWorkspace: false })
-    expect(tools.map(tool => tool.name)).toEqual(['canvas_state', 'view_canvas', 'generate_image', 'edit_image'])
+    expect(tools.map(tool => tool.name)).toEqual(['canvas_state', 'view_canvas', 'generate_image', 'edit_image', 'find_inspiration'])
     expect(installSection).toHaveBeenCalledTimes(1)
     const [owner, ns, schema, entry, hooks] = installSection.mock.calls[0] as unknown as [Context, string, unknown, unknown, { setSource(): void; onChange(): void }]
     expect(owner).toBe(ctx)
@@ -94,7 +94,24 @@ describe('image tool registration', () => {
   it('registers canvas tools, generate_image, and edit_image', () => {
     const { ctx, tools } = harnessContext()
     apply(ctx, { provider: 'google', saveToWorkspace: false })
-    expect(tools.map(tool => tool.name)).toEqual(['canvas_state', 'view_canvas', 'generate_image', 'edit_image'])
+    expect(tools.map(tool => tool.name)).toEqual(['canvas_state', 'view_canvas', 'generate_image', 'edit_image', 'find_inspiration'])
+  })
+
+  it('serves reusable inspiration prompts to the agent with bounded hits', async () => {
+    const { ctx, tools } = harnessContext()
+    apply(ctx, { provider: 'google', saveToWorkspace: false })
+    const tool = toolByName(tools, 'find_inspiration')
+    const value = await tool.execute({ query: '水彩', source: 'handraw-style' }, { signal: new AbortController().signal } as never) as { total: number; hits: { sourceId: string; title: string; prompt: string }[] }
+    expect(value.total).toBeGreaterThan(0)
+    expect(value.hits.length).toBeLessThanOrEqual(8)
+    for (const hit of value.hits) {
+      expect(hit.sourceId).toBe('handraw-style')
+      expect(hit.prompt.length).toBeGreaterThan(0)
+    }
+    expect(value.hits.some(hit => `${hit.title}\n${hit.prompt}`.includes('水彩'))).toBe(true)
+    const rendered = tool.output.render({}, { total: value.total, hits: value.hits } as never)
+    expect(rendered[0]!.type).toBe('text')
+    expect((rendered[0] as { text: string }).text).toContain(value.hits[0]!.prompt)
   })
 
   it('declares the ComfyUI seed in both tool output schemas', () => {
