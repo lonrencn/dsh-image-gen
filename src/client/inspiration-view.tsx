@@ -96,7 +96,7 @@ const COPY = {
     kicker: 'Prompt inspiration', title: '灵感素材', subtitle: '从公开案例中找构图、质感和文字处理，再带回工作台继续调整。',
     refresh: '检查更新', refreshing: '正在更新…', clearCache: '清理缓存', clearingCache: '正在清理…', cacheCleared: '已清空本地图片缓存', cacheClearFailed: '清理缓存失败', clearCacheRestart: '后端未就绪，请重启 DSH 后生效',
     clearModalTitle: '清理本地图片缓存？', clearModalDesc: '将删除本地保存的灵感素材图片以释放磁盘空间。案例列表、Prompt 和您的收藏夹不会受到任何影响，后续浏览时会自动重新拉取。', cancel: '取消', confirmClear: '确认清理',
-    allCategories: '全部分类', allStyles: '全部风格', allScenes: '全部场景',
+    allCategories: '全部分类', allStyles: '全部风格', allScenes: '全部场景', categoryNav: '分类导航',
     search: '搜索案例、Prompt、风格…', results: '找到 {count} 个案例', noResults: '没有匹配的素材，换个关键词或筛选条件试试。',
     selectHint: '选择一张素材，查看完整 Prompt 并带回工作台。', prompt: '完整 Prompt', copy: '复制 Prompt', copied: '已复制', use: '使用这个 Prompt', source: '查看原来源',
     useReference: '提示词 + 参考图', referenceLoading: '获取参考图中…', referenceFailed: '参考图获取失败，请重试',
@@ -108,7 +108,7 @@ const COPY = {
     kicker: 'Prompt inspiration', title: 'Inspiration', subtitle: 'Explore public examples, then bring a prompt back to Studio to make it your own.',
     refresh: 'Check updates', refreshing: 'Updating…', clearCache: 'Clear cache', clearingCache: 'Clearing…', cacheCleared: 'Local image cache cleared', cacheClearFailed: 'Failed to clear cache', clearCacheRestart: 'Backend not ready, please restart DSH',
     clearModalTitle: 'Clear local image cache?', clearModalDesc: 'This will delete locally cached inspiration images to free up disk space. The catalog, prompts, and your bookmarks will remain intact. Images will be re-fetched on demand.', cancel: 'Cancel', confirmClear: 'Clear Cache',
-    allCategories: 'All categories', allStyles: 'All styles', allScenes: 'All scenes',
+    allCategories: 'All categories', allStyles: 'All styles', allScenes: 'All scenes', categoryNav: 'Categories',
     search: 'Search examples, prompts, styles…', results: '{count} examples', noResults: 'No matching examples. Try another keyword or filter.',
     selectHint: 'Choose an example to read its full prompt and use it in Studio.', prompt: 'Full prompt', copy: 'Copy prompt', copied: 'Copied', use: 'Use this prompt', source: 'View source',
     useReference: 'Prompt + reference', referenceLoading: 'Fetching image…', referenceFailed: 'Failed to load the reference image',
@@ -140,8 +140,11 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
   const [lightboxCase, setLightboxCase] = useState<{ sourceId: string; caseId: string; revision: string; title: string; alt: string } | null>(null)
   const [toast, setToast] = useState<{ text: string; isError?: boolean } | null>(null)
   const [referenceBusy, setReferenceBusy] = useState(false)
+  const [pendingJump, setPendingJump] = useState('')
+  const [activeCategory, setActiveCategory] = useState('')
   const toastTimerRef = useRef<number | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!locale?.subscribe) return
@@ -228,6 +231,8 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
     setScene('')
     setOnlyFavorites(false)
     setSelected(null)
+    setPendingJump('')
+    setActiveCategory('')
   }
 
   const useSelectedReference = async () => {
@@ -262,6 +267,66 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
 
   useEffect(() => setVisibleLimit(60), [search, category, style, scene, onlyFavorites])
   const visibleCases = matchingCases.slice(0, visibleLimit)
+
+  // 每个分类在当前筛选下的命中数：驱动导航芯片的计数与可用性
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const item of matchingCases) counts.set(item.category, (counts.get(item.category) ?? 0) + 1)
+    return counts
+  }, [matchingCases])
+
+  // 可见案例按分类分组（沿用素材库的分类顺序），渲染成带粘性标题的“样例区”
+  const visibleGroups = useMemo(() => {
+    if (source === null) return []
+    const byCategory = new Map<string, InspirationCase[]>()
+    for (const item of visibleCases) {
+      const bucket = byCategory.get(item.category)
+      if (bucket !== undefined) bucket.push(item)
+      else byCategory.set(item.category, [item])
+    }
+    return source.categories.flatMap(name => {
+      const items = byCategory.get(name)
+      return items !== undefined ? [{ name, items }] : []
+    })
+  }, [source, visibleCases])
+  const visibleGroupSignature = visibleGroups.map(group => group.name).join('\u0000')
+
+  // 点击导航：清掉单分类下拉（保证目标区可见），等待筛选与虚拟列表补齐后平滑滚动
+  const jumpToCategory = (name: string) => {
+    if (category !== '') setCategory('')
+    setPendingJump(name)
+  }
+
+  useEffect(() => {
+    if (pendingJump === '') return
+    const index = matchingCases.findIndex(item => item.category === pendingJump)
+    if (index < 0) return
+    if (index >= visibleLimit) {
+      setVisibleLimit(index + 60)
+      return
+    }
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(`dsh-ig-cat-${encodeURIComponent(pendingJump)}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setPendingJump('')
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [pendingJump, matchingCases, visibleLimit])
+
+  // 滚动监听：当前停留在视口上部的样例区即为导航高亮项
+  useEffect(() => {
+    const root = listRef.current
+    if (root === null) return
+    const headers = Array.from(root.querySelectorAll<HTMLElement>('.dsh-ig-inspiration-group-head'))
+    if (headers.length === 0) return
+    const categoryByTarget = new Map<Element, string>()
+    for (const header of headers) categoryByTarget.set(header, header.dataset.category ?? '')
+    const observer = new IntersectionObserver(entries => {
+      const visible = entries.find(entry => entry.isIntersecting)
+      if (visible !== undefined) setActiveCategory(categoryByTarget.get(visible.target) ?? '')
+    }, { rootMargin: '0px 0px -75% 0px' })
+    for (const header of headers) observer.observe(header)
+    return () => observer.disconnect()
+  }, [visibleGroupSignature])
 
   // 现代感应式无限滚动：滑近底部时自动追加批次
   useEffect(() => {
@@ -414,6 +479,36 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
           {source.scenes.map(item => <option key={item} value={item}>{translateTag(item, language)}</option>)}
         </select>
       </div>
+      <nav className="dsh-ig-inspiration-catnav" aria-label={t('categoryNav')}>
+        <button
+          type="button"
+          className={`dsh-ig-inspiration-catnav-chip ${category === '' && activeCategory === '' ? 'is-active' : ''}`}
+          onClick={() => {
+            if (category !== '') setCategory('')
+            listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }}
+        >
+          <span>{t('allCategories')}</span>
+          <em>{matchingCases.length}</em>
+        </button>
+        {source.categories.map(name => {
+          const count = categoryCounts.get(name) ?? 0
+          const isActive = category === name || (category === '' && activeCategory === name)
+          return (
+            <button
+              key={name}
+              type="button"
+              disabled={count === 0}
+              aria-current={isActive || undefined}
+              className={`dsh-ig-inspiration-catnav-chip ${isActive ? 'is-active' : ''}`}
+              onClick={() => jumpToCategory(name)}
+            >
+              <span>{translateTag(name, language)}</span>
+              <em>{count}</em>
+            </button>
+          )
+        })}
+      </nav>
       <div className="dsh-ig-inspiration-layout">
         <div>
           <div className="dsh-ig-inspiration-summary">
@@ -424,21 +519,35 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
             <div className="dsh-ig-inspiration-empty">{onlyFavorites ? t('noFavorites') : t('noResults')}</div>
           ) : (
             <>
-              <div className="dsh-ig-inspiration-grid">
-                {visibleCases.map(item => (
-                  <InspirationCard
-                    key={item.id}
-                    item={item}
-                    sourceId={source.id}
-                    sourceRevision={source.imageRevision ?? source.version}
-                    selected={selected?.id === item.id}
-                    isFavorited={favorites.has(item.id)}
-                    language={language}
-                    featuredLabel={t('featured')}
-                    retryLabel={t('retry')}
-                    onSelect={() => { setSelected(item); setCopied(false) }}
-                    onToggleFavorite={() => toggleFavorite(item.id)}
-                  />
+              <div ref={listRef} className="dsh-ig-inspiration-list">
+                {visibleGroups.map(group => (
+                  <section key={group.name} className="dsh-ig-inspiration-group">
+                    <h3
+                      id={`dsh-ig-cat-${encodeURIComponent(group.name)}`}
+                      data-category={group.name}
+                      className="dsh-ig-inspiration-group-head"
+                    >
+                      <span>{translateTag(group.name, language)}</span>
+                      <em>{categoryCounts.get(group.name) ?? group.items.length}</em>
+                    </h3>
+                    <div className="dsh-ig-inspiration-grid">
+                      {group.items.map(item => (
+                        <InspirationCard
+                          key={item.id}
+                          item={item}
+                          sourceId={source.id}
+                          sourceRevision={source.imageRevision ?? source.version}
+                          selected={selected?.id === item.id}
+                          isFavorited={favorites.has(item.id)}
+                          language={language}
+                          featuredLabel={t('featured')}
+                          retryLabel={t('retry')}
+                          onSelect={() => { setSelected(item); setCopied(false) }}
+                          onToggleFavorite={() => toggleFavorite(item.id)}
+                        />
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
               {visibleCases.length < matchingCases.length ? (
