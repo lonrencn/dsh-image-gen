@@ -27,12 +27,10 @@ for (const file of readdirSync(join(refs, 'layouts'))) {
 }
 
 const LAYOUT_CATEGORY_ZH = { 'social-card': '社媒卡', infographic: '信息图', 'comic-storyboard': '漫画分镜' }
-const STYLE_SHEET = { A: 'A_001-016.webp', B: 'B_036-048.webp', C: 'C_055-070.webp', D: 'D_083-098.webp', E: 'E_124-140.webp', F: 'F_155-176.webp', G: 'G_201-216.webp', H: 'H_217-240.webp' }
-function styleSheetImage(number) {
-  const n = Number.parseInt(number, 10)
-  const bands = [[1, 16, 'A_001-016.webp'], [17, 32, 'A_017-032.webp'], [33, 35, 'A_033-035.webp'], [36, 48, 'B_036-048.webp'], [49, 54, 'B_049-054.webp'], [55, 70, 'C_055-070.webp'], [71, 82, 'C_071-082.webp'], [83, 98, 'D_083-098.webp'], [99, 114, 'D_099-114.webp'], [115, 123, 'D_115-123.webp'], [124, 139, 'E_124-139.webp'], [140, 154, 'E_140-154.webp'], [155, 170, 'F_155-170.webp'], [171, 186, 'F_171-186.webp'], [187, 200, 'F_187-200.webp'], [201, 216, 'G_201-216.webp'], [217, 232, 'H_217-232.webp'], [233, 248, 'H_233-248.webp'], [249, 264, 'H_249-264.webp'], [265, 278, 'H_265-278.webp']]
-  for (const [lo, hi, file] of bands) if (n >= lo && n <= hi) return `/images/${file}`
-  return `/images/${STYLE_SHEET[(number.charCodeAt(0) - 65)] ?? 'A_001-016.webp'}`
+// Styles have no per-item image upstream; scripts/crop-handraw-tiles.py slices
+// the 4x4 contact sheets into per-style tiles bundled under assets/style-tiles.
+function styleTileImage(number) {
+  return `/images/style-tiles/s-${String(Number.parseInt(number, 10)).padStart(3, '0')}.webp`
 }
 
 const cases = []
@@ -51,7 +49,7 @@ for (const s of styles) {
   cases.push({
     id: `s-${s.number}`,
     title: `#${s.number} ${s.generation_name}`,
-    image: styleSheetImage(s.number),
+    image: styleTileImage(s.number),
     imageAlt: `手绘风格 ${s.number} ${s.generation_name}`,
     sourceLabel: s.reference,
     prompt,
