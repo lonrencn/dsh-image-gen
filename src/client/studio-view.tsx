@@ -195,7 +195,9 @@ export const StudioView: FC<{
   /** Manual-only collapse for the right generate form; the form stays put in
    *  narrow seats because it is the primary generation surface. Starts folded
    *  when the studio opens straight into the infinite canvas. */
-  const [generateCollapsed, setGenerateCollapsed] = useState(initialCanvasSurface === 'infinite')
+  // The sidebar variant opens on the infinite canvas; a carried-in prompt draft
+  // still needs its generate form visible.
+  const [generateCollapsed, setGenerateCollapsed] = useState(initialCanvasSurface === 'infinite' && initialPrompt === undefined)
   /** Workbench root, observed so a narrow column (right sidebar) can fold the recent rail. */
   const workbenchRootRef = useRef<HTMLElement | null>(null)
   /** Set once the user toggles the rail by hand; auto-folding then stands down for this mount. */

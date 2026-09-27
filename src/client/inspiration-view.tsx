@@ -1,9 +1,22 @@
 import { useEffect, useMemo, useRef, useState, type FC } from 'react'
-import { AlertTriangle, Check, Clipboard, ExternalLink, ImageIcon, ImagePlus, LoaderCircle, Maximize2, Search, Sparkles, Star, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Check, Clipboard, ExternalLink, ImageIcon, ImagePlus, LoaderCircle, Maximize2, Search, Shuffle, Sparkles, Star, Trash2, X } from 'lucide-react'
 import { INSPIRATION_ROUTE } from '../shared.js'
 import type { InspirationCase, InspirationCatalog, InspirationSource } from '../inspiration.js'
 import { clearInspirationImageCache, evictInspirationImage, fetchInspirationImage } from './inspiration-image-cache.js'
 import { loadCachedInspirationCatalog, saveCachedInspirationCatalog } from './inspiration-catalog-cache.js'
+import {
+  BAOYU_COMPOSER_SOURCE_ID,
+  BAOYU_DEFAULT_SELECTION,
+  BAOYU_LABELS_ZH,
+  BAOYU_MOODS,
+  BAOYU_PALETTES,
+  BAOYU_RENDERINGS,
+  BAOYU_TEXT_LEVELS,
+  BAOYU_TYPES,
+  composeBaoyuPrompt,
+  randomBaoyuSelection,
+  type BaoyuSelection,
+} from '../baoyu-compose.js'
 import type { LocaleService } from './gallery-view.js'
 
 type Language = 'zh' | 'en'
@@ -103,6 +116,11 @@ const COPY = {
     loading: '正在读取素材库…', loadFailed: '素材库读取失败，请稍后重试。', copyFailed: '复制失败', retry: '重新加载', imageFailed: '图片暂时无法读取', featured: '精选', updated: '素材已更新（{count} 条）', updateFailed: '更新失败，仍在使用当前内置素材。',
     allLoaded: '已展示全部 {count} 个案例', onlyFavorites: '仅看收藏', noFavorites: '暂无收藏的灵感案例，浏览时点击星标即可收藏。',
     favorite: '收藏', favorited: '已收藏', zoomHint: '点击放大查看', close: '关闭',
+    composeTab: '宝玉维度组合',
+    composeHint: '五个维度自由拼接封面 Prompt，数据源自宝玉封图 skill（JimLiu/baoyu-skills，MIT）。',
+    composeType: '类型', composePalette: '色板', composeRendering: '渲染', composeText: '文字', composeMood: '情绪',
+    composeTitleLabel: '标题文字', composeTitlePlaceholder: '输入封面标题（文字层级含标题时必填）', composeTitleRequired: '该文字层级需要先填写标题。',
+    composeRandomize: '随机组合', composeUse: '用此 Prompt 去生成', composeCombos: '共 {count} 种组合', composePreview: '拼接结果预览',
   },
   en: {
     kicker: 'Prompt inspiration', title: 'Inspiration', subtitle: 'Explore public examples, then bring a prompt back to Studio to make it your own.',
@@ -115,6 +133,11 @@ const COPY = {
     loading: 'Loading inspiration…', loadFailed: 'Could not load the inspiration library.', copyFailed: 'Failed to copy', retry: 'Retry', imageFailed: 'Image is temporarily unavailable', featured: 'Featured', updated: 'Updated ({count} examples)', updateFailed: 'Update failed. The current bundled library is still available.',
     allLoaded: 'All {count} examples displayed', onlyFavorites: 'Favorites only', noFavorites: 'No favorited examples yet. Click the star icon on any card to save.',
     favorite: 'Favorite', favorited: 'Favorited', zoomHint: 'Click to zoom in', close: 'Close',
+    composeTab: 'Baoyu Composer',
+    composeHint: 'Stitch a cover prompt from five dimensions, based on the baoyu cover-image skill (JimLiu/baoyu-skills, MIT).',
+    composeType: 'Type', composePalette: 'Palette', composeRendering: 'Rendering', composeText: 'Text', composeMood: 'Mood',
+    composeTitleLabel: 'Title text', composeTitlePlaceholder: 'Cover title (required when the text level includes a title)', composeTitleRequired: 'This text level needs a title first.',
+    composeRandomize: 'Randomize', composeUse: 'Generate with this prompt', composeCombos: '{count} combinations', composePreview: 'Composed prompt preview',
   },
 } as const
 
@@ -124,6 +147,7 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
   const [language, setLanguage] = useState<Language>(() => locale?.getSnapshot?.().active?.startsWith('en') ? 'en' : 'zh')
   const [catalog, setCatalog] = useState<InspirationCatalog | null>(null)
   const [activeSourceId, setActiveSourceId] = useState('')
+  const [baoyuSelection, setBaoyuSelection] = useState<BaoyuSelection>(BAOYU_DEFAULT_SELECTION)
   const [catalogError, setCatalogError] = useState(false)
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('')
@@ -221,10 +245,11 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
   }, [])
 
   const source = catalog?.sources.find(candidate => candidate.id === activeSourceId) ?? catalog?.sources[0] ?? null
+  const composerActive = activeSourceId === BAOYU_COMPOSER_SOURCE_ID
 
   /** Switch the active library; each source owns its own category/style/scene vocabularies. */
   const switchSource = (id: string) => {
-    if (id === (source?.id ?? '')) return
+    if (id === activeSourceId) return
     setActiveSourceId(id)
     setCategory('')
     setStyle('')
@@ -439,22 +464,40 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
     ) : source === null ? (
       <div className="dsh-ig-inspiration-empty"><LoaderCircle className="dsh-ig-spin" size={23} /><span>{t('loading')}</span></div>
     ) : <>
-      {catalog !== null && catalog.sources.length > 1 ? (
+      {catalog !== null ? (
         <div className="dsh-ig-inspiration-sources" role="tablist">
           {catalog.sources.map(item => (
             <button
               key={item.id}
               type="button"
               role="tab"
-              aria-selected={item.id === source?.id}
-              className={`dsh-ig-inspiration-source-chip ${item.id === source?.id ? 'is-active' : ''}`}
+              aria-selected={!composerActive && item.id === source?.id}
+              className={`dsh-ig-inspiration-source-chip ${!composerActive && item.id === source?.id ? 'is-active' : ''}`}
               onClick={() => switchSource(item.id)}
             >
               {item.label}
             </button>
           ))}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={composerActive}
+            className={`dsh-ig-inspiration-source-chip ${composerActive ? 'is-active' : ''}`}
+            onClick={() => switchSource(BAOYU_COMPOSER_SOURCE_ID)}
+          >
+            <Sparkles size={11} />
+            {t('composeTab')}
+          </button>
         </div>
       ) : null}
+      {composerActive ? (
+        <BaoyuComposerPanel
+          language={language}
+          selection={baoyuSelection}
+          onChange={setBaoyuSelection}
+          onUsePrompt={onUsePrompt}
+        />
+      ) : <>
       <div className="dsh-ig-inspiration-toolbar">
         <label className="dsh-ig-inspiration-search"><Search size={15} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder={t('search')} /></label>
         <button
@@ -608,6 +651,7 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
           )}
         </aside>
       </div>
+      </>}
     </>}
 
     {/* 大图弹窗全屏查看 (Lightbox Modal) */}
@@ -662,6 +706,129 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
       </div>
     )}
   </section>
+}
+
+const BaoyuComposerPanel: FC<{
+  language: Language
+  selection: BaoyuSelection
+  onChange(next: BaoyuSelection): void
+  onUsePrompt(prompt: string): void
+}> = ({ language, selection, onChange, onUsePrompt }) => {
+  const [copied, setCopied] = useState(false)
+  const [copyFailed, setCopyFailed] = useState(false)
+  const tr = (key: CopyKey, params?: Record<string, string>): string => {
+    let text: string = COPY[language][key] ?? COPY.zh[key]
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        text = text.replace(`{${k}}`, v)
+      }
+    }
+    return text
+  }
+  const label = (id: string): string => (language === 'zh' ? BAOYU_LABELS_ZH[id] ?? id : id)
+  const needsTitle = selection.text !== 'none'
+  const titleReady = !needsTitle || selection.title.trim() !== ''
+  let prompt = ''
+  if (titleReady) {
+    try {
+      prompt = composeBaoyuPrompt(selection)
+    } catch {
+      prompt = ''
+    }
+  }
+  const combos = BAOYU_TYPES.length * BAOYU_PALETTES.length * BAOYU_RENDERINGS.length * BAOYU_TEXT_LEVELS.length * BAOYU_MOODS.length
+
+  const dimension = (name: string, key: 'type' | 'palette' | 'rendering' | 'text' | 'mood', options: { id: string }[]) => (
+    <div className="dsh-ig-baoyu-dim" key={name}>
+      <div className="dsh-ig-baoyu-dim-head">{name}</div>
+      <div className="dsh-ig-baoyu-chips">
+        {options.map(option => {
+          const palette = key === 'palette' ? BAOYU_PALETTES.find(item => item.id === option.id) : undefined
+          return (
+            <button
+              key={option.id}
+              type="button"
+              className={`dsh-ig-baoyu-chip ${selection[key] === option.id ? 'is-active' : ''}`}
+              onClick={() => {
+                onChange({ ...selection, [key]: option.id })
+                setCopied(false)
+              }}
+              title={language === 'zh' ? (palette?.tagline ?? option.id) : option.id}
+            >
+              <span>{label(option.id)}</span>
+              {palette !== undefined ? (
+                <span className="dsh-ig-baoyu-swatch">
+                  {[palette.colors[0], palette.colors.find(color => color.role === 'Background'), palette.colors.find(color => color.role === 'Accent 1')].map((color, index) =>
+                    color === undefined ? null : <i key={index} style={{ background: color.hex }} />,
+                  )}
+                </span>
+              ) : null}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  const copyPrompt = async (): Promise<void> => {
+    if (prompt === '') return
+    try {
+      await navigator.clipboard.writeText(prompt)
+      setCopied(true)
+      setCopyFailed(false)
+    } catch {
+      setCopyFailed(true)
+    }
+  }
+
+  return (
+    <div className="dsh-ig-baoyu-panel">
+      <div className="dsh-ig-baoyu-intro">
+        <strong className="dsh-ig-baoyu-combos">{tr('composeCombos', { count: String(combos) })}</strong>
+        <span className="dsh-ig-baoyu-hint">{tr('composeHint')}</span>
+      </div>
+      {dimension(tr('composeType'), 'type', BAOYU_TYPES)}
+      {dimension(tr('composePalette'), 'palette', BAOYU_PALETTES)}
+      {dimension(tr('composeRendering'), 'rendering', BAOYU_RENDERINGS)}
+      {dimension(tr('composeText'), 'text', BAOYU_TEXT_LEVELS)}
+      {dimension(tr('composeMood'), 'mood', BAOYU_MOODS)}
+      <div className="dsh-ig-baoyu-dim">
+        <div className="dsh-ig-baoyu-dim-head">{tr('composeTitleLabel')}</div>
+        <input
+          className="dsh-ig-baoyu-title-input"
+          value={selection.title}
+          placeholder={tr('composeTitlePlaceholder')}
+          disabled={selection.text === 'none'}
+          onChange={event => {
+            onChange({ ...selection, title: event.target.value })
+            setCopied(false)
+          }}
+        />
+        {needsTitle && !titleReady ? <div className="dsh-ig-baoyu-required">{tr('composeTitleRequired')}</div> : null}
+      </div>
+      <div className="dsh-ig-baoyu-actions">
+        <button type="button" className="dsh-ig-baoyu-btn" onClick={() => onChange(randomBaoyuSelection(selection))}>
+          <Shuffle size={13} />
+          <span>{tr('composeRandomize')}</span>
+        </button>
+        <button type="button" className="dsh-ig-baoyu-btn" disabled={prompt === ''} onClick={() => { void copyPrompt() }}>
+          {copied ? <Check size={13} /> : <Clipboard size={13} />}
+          <span>{copied ? tr('copied') : tr('copy')}</span>
+        </button>
+        <button type="button" className="dsh-ig-baoyu-btn is-primary" disabled={prompt === ''} onClick={() => onUsePrompt(prompt)}>
+          <Sparkles size={13} />
+          <span>{tr('composeUse')}</span>
+        </button>
+        {copyFailed ? <span className="dsh-ig-baoyu-required">{tr('copyFailed')}</span> : null}
+      </div>
+      {prompt !== '' ? (
+        <div className="dsh-ig-baoyu-preview-block">
+          <div className="dsh-ig-baoyu-preview-head">{tr('composePreview')}</div>
+          <pre className="dsh-ig-baoyu-preview">{prompt}</pre>
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 const InspirationCard: FC<{
