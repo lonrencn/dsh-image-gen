@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FC } from 'react'
-import { AlertTriangle, Check, Clipboard, ExternalLink, ImageIcon, LoaderCircle, Maximize2, Search, Sparkles, Star, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Check, Clipboard, ExternalLink, ImageIcon, ImagePlus, LoaderCircle, Maximize2, Search, Sparkles, Star, Trash2, X } from 'lucide-react'
 import { INSPIRATION_ROUTE } from '../shared.js'
 import type { InspirationCase, InspirationCatalog, InspirationSource } from '../inspiration.js'
 import { clearInspirationImageCache, evictInspirationImage, fetchInspirationImage } from './inspiration-image-cache.js'
@@ -99,6 +99,7 @@ const COPY = {
     allCategories: '全部分类', allStyles: '全部风格', allScenes: '全部场景',
     search: '搜索案例、Prompt、风格…', results: '找到 {count} 个案例', noResults: '没有匹配的素材，换个关键词或筛选条件试试。',
     selectHint: '选择一张素材，查看完整 Prompt 并带回工作台。', prompt: '完整 Prompt', copy: '复制 Prompt', copied: '已复制', use: '使用这个 Prompt', source: '查看原来源',
+    useReference: '提示词 + 参考图', referenceLoading: '获取参考图中…', referenceFailed: '参考图获取失败，请重试',
     loading: '正在读取素材库…', loadFailed: '素材库读取失败，请稍后重试。', copyFailed: '复制失败', retry: '重新加载', imageFailed: '图片暂时无法读取', featured: '精选', updated: '素材已更新（{count} 条）', updateFailed: '更新失败，仍在使用当前内置素材。',
     allLoaded: '已展示全部 {count} 个案例', onlyFavorites: '仅看收藏', noFavorites: '暂无收藏的灵感案例，浏览时点击星标即可收藏。',
     favorite: '收藏', favorited: '已收藏', zoomHint: '点击放大查看', close: '关闭',
@@ -110,6 +111,7 @@ const COPY = {
     allCategories: 'All categories', allStyles: 'All styles', allScenes: 'All scenes',
     search: 'Search examples, prompts, styles…', results: '{count} examples', noResults: 'No matching examples. Try another keyword or filter.',
     selectHint: 'Choose an example to read its full prompt and use it in Studio.', prompt: 'Full prompt', copy: 'Copy prompt', copied: 'Copied', use: 'Use this prompt', source: 'View source',
+    useReference: 'Prompt + reference', referenceLoading: 'Fetching image…', referenceFailed: 'Failed to load the reference image',
     loading: 'Loading inspiration…', loadFailed: 'Could not load the inspiration library.', copyFailed: 'Failed to copy', retry: 'Retry', imageFailed: 'Image is temporarily unavailable', featured: 'Featured', updated: 'Updated ({count} examples)', updateFailed: 'Update failed. The current bundled library is still available.',
     allLoaded: 'All {count} examples displayed', onlyFavorites: 'Favorites only', noFavorites: 'No favorited examples yet. Click the star icon on any card to save.',
     favorite: 'Favorite', favorited: 'Favorited', zoomHint: 'Click to zoom in', close: 'Close',
@@ -118,9 +120,10 @@ const COPY = {
 
 type CopyKey = keyof typeof COPY.zh
 
-export const InspirationView: FC<{ locale?: LocaleService | undefined; onUsePrompt(prompt: string): void }> = ({ locale, onUsePrompt }) => {
+export const InspirationView: FC<{ locale?: LocaleService | undefined; onUsePrompt(prompt: string): void; onUseReference?: ((file: File, prompt: string) => void) | undefined }> = ({ locale, onUsePrompt, onUseReference }) => {
   const [language, setLanguage] = useState<Language>(() => locale?.getSnapshot?.().active?.startsWith('en') ? 'en' : 'zh')
   const [catalog, setCatalog] = useState<InspirationCatalog | null>(null)
+  const [activeSourceId, setActiveSourceId] = useState('')
   const [catalogError, setCatalogError] = useState(false)
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('')
@@ -136,6 +139,7 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
   const [onlyFavorites, setOnlyFavorites] = useState(false)
   const [lightboxCase, setLightboxCase] = useState<{ sourceId: string; caseId: string; title: string; alt: string } | null>(null)
   const [toast, setToast] = useState<{ text: string; isError?: boolean } | null>(null)
+  const [referenceBusy, setReferenceBusy] = useState(false)
   const toastTimerRef = useRef<number | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
 
@@ -213,7 +217,33 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
     return () => { mounted = false }
   }, [])
 
-  const source = catalog?.sources[0] ?? null
+  const source = catalog?.sources.find(candidate => candidate.id === activeSourceId) ?? catalog?.sources[0] ?? null
+
+  /** Switch the active library; each source owns its own category/style/scene vocabularies. */
+  const switchSource = (id: string) => {
+    if (id === (source?.id ?? '')) return
+    setActiveSourceId(id)
+    setCategory('')
+    setStyle('')
+    setScene('')
+    setOnlyFavorites(false)
+    setSelected(null)
+  }
+
+  const useSelectedReference = async () => {
+    if (selected === null || source === null || onUseReference === undefined) return
+    setReferenceBusy(true)
+    try {
+      const blob = await fetchInspirationImage(source.id, selected.id)
+      const ext = blob.type === 'image/jpeg' ? 'jpg' : blob.type.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png'
+      onUseReference(new File([blob], `inspiration-${selected.id}.${ext}`, { type: blob.type.startsWith('image/') ? blob.type : 'image/webp' }), selected.prompt)
+    } catch {
+      showToast(t('referenceFailed'), true)
+    } finally {
+      setReferenceBusy(false)
+    }
+  }
+
   const matchingCases = useMemo(() => {
     if (source === null) return []
     const query = search.trim().toLowerCase()
@@ -344,6 +374,22 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
     ) : source === null ? (
       <div className="dsh-ig-inspiration-empty"><LoaderCircle className="dsh-ig-spin" size={23} /><span>{t('loading')}</span></div>
     ) : <>
+      {catalog !== null && catalog.sources.length > 1 ? (
+        <div className="dsh-ig-inspiration-sources" role="tablist">
+          {catalog.sources.map(item => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={item.id === source?.id}
+              className={`dsh-ig-inspiration-source-chip ${item.id === source?.id ? 'is-active' : ''}`}
+              onClick={() => switchSource(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className="dsh-ig-inspiration-toolbar">
         <label className="dsh-ig-inspiration-search"><Search size={15} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder={t('search')} /></label>
         <button
@@ -441,6 +487,11 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
                   <button type="button" onClick={() => void copyPrompt()}>{copied ? <Check size={14} /> : <Clipboard size={14} />}{copied ? t('copied') : t('copy')}</button>
                   {selected.sourceUrl ?? selected.githubUrl ? <a className="dsh-ig-inspiration-source-link" href={selected.sourceUrl ?? selected.githubUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />{t('source')}</a> : <span /> }
                   <button type="button" className="dsh-ig-inspiration-use" onClick={() => onUsePrompt(selected.prompt)}><Sparkles size={14} />{t('use')}</button>
+                  {onUseReference !== undefined ? (
+                    <button type="button" className="dsh-ig-inspiration-use is-secondary" disabled={referenceBusy} onClick={() => { void useSelectedReference() }}>
+                      <ImagePlus size={14} />{referenceBusy ? t('referenceLoading') : t('useReference')}
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </>

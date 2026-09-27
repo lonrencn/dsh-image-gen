@@ -369,6 +369,7 @@ export const GalleryViewTab: FC<GalleryViewTabProps> = (props) => {
   const { locale, sessionId, useSessions, useWorkspaces, credentialEvents, inSidebar, defaultTab, initialCanvasSurface } = props
   const [activeTab, setActiveTab] = useState<TabKey>(defaultTab ?? 'gallery')
   const [studioDraft, setStudioDraft] = useState<string | undefined>(undefined)
+  const [studioReference, setStudioReference] = useState<File | undefined>(undefined)
   const [items, setItems] = useState<GalleryItem[]>([])
   const [search, setSearch] = useState('')
   const [selectedProvider, setSelectedProvider] = useState<string>('all')
@@ -506,7 +507,14 @@ export const GalleryViewTab: FC<GalleryViewTabProps> = (props) => {
     setActiveTab('studio')
   }, [])
 
+  const useInspirationReference = useCallback((file: File, prompt: string) => {
+    setStudioDraft(prompt)
+    setStudioReference(file)
+    setActiveTab('studio')
+  }, [])
+
   const clearStudioDraft = useCallback(() => setStudioDraft(undefined), [])
+  const clearStudioReference = useCallback(() => setStudioReference(undefined), [])
 
   // Hide chat input composer while browsing gallery/studio. Only in the
   // conversation-view variant: the sidebar variant shares the screen with the
@@ -1321,9 +1329,9 @@ export const GalleryViewTab: FC<GalleryViewTabProps> = (props) => {
             </div>
           )
         ) : activeTab === 'inspiration' ? (
-          <InspirationView locale={locale} onUsePrompt={useInspirationPrompt} />
+          <InspirationView locale={locale} onUsePrompt={useInspirationPrompt} onUseReference={useInspirationReference} />
         ) : (
-          <StudioView locale={locale} credentialEvents={credentialEvents} workspace={activeWorkspace} initialPrompt={studioDraft} initialCanvasSurface={initialCanvasSurface} showInfiniteCanvasHint={!inSidebar} onInitialPromptApplied={clearStudioDraft} onOpenInspiration={() => setActiveTab('inspiration')} />
+          <StudioView locale={locale} credentialEvents={credentialEvents} workspace={activeWorkspace} initialPrompt={studioDraft} initialReference={studioReference} initialCanvasSurface={initialCanvasSurface} showInfiniteCanvasHint={!inSidebar} onInitialPromptApplied={clearStudioDraft} onInitialReferenceApplied={clearStudioReference} onOpenInspiration={() => setActiveTab('inspiration')} />
         )}
       </div>
 

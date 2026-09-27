@@ -5,6 +5,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import {
   BUNDLED_INSPIRATION_CATALOG,
+  HANDDRAW_SOURCE_ID,
+  HANDDRAW_SOURCE_VERSION,
   INSPIRATION_SOURCE_ID,
   INSPIRATION_SOURCE_IMAGE_MIRROR,
   INSPIRATION_SOURCE_VERSION,
@@ -13,6 +15,7 @@ import {
   parseInspirationSnapshot,
   publicInspirationCatalog,
   type ResolvedInspirationCatalog,
+  type ResolvedSource,
 } from './inspiration.js'
 
 const MAX_INDEX_BYTES = 3 * 1024 * 1024
@@ -45,7 +48,11 @@ export function createInspirationRoute(deps: InspirationRouteDeps = {}) {
     }
     if (req.method === 'POST' && url.pathname === '/refresh') {
       try {
-        activeCatalog = await fetchSnapshot(request)
+        const refreshed = await fetchSnapshot(request)
+        // Only the awesome-gpt-image-2 source is refreshable at runtime; the
+        // handraw-style source is pinned to the bundled snapshot.
+        const handdraw = BUNDLED_INSPIRATION_CATALOG.sources.find(source => source.id === HANDDRAW_SOURCE_ID)
+        activeCatalog = { schemaVersion: 1, sources: [...refreshed.sources, ...(handdraw !== undefined ? [handdraw] : [])] }
         return json(res, 200, publicInspirationCatalog(activeCatalog))
       } catch (error) {
         return jsonError(res, 502, message(error, 'refresh-failed'))
@@ -59,12 +66,12 @@ export function createInspirationRoute(deps: InspirationRouteDeps = {}) {
     const match = /^\/image\/([a-z0-9-]{1,80})\/([a-zA-Z0-9_-]{1,120})$/u.exec(url.pathname)
     if (req.method !== 'GET' || match === null) return jsonError(res, 404, 'not-found')
     const [, sourceId, caseId] = match
-    if (sourceId !== INSPIRATION_SOURCE_ID || caseId === undefined) return jsonError(res, 404, 'source-not-found')
+    if (sourceId === undefined || caseId === undefined || ![INSPIRATION_SOURCE_ID, HANDDRAW_SOURCE_ID].includes(sourceId)) return jsonError(res, 404, 'source-not-found')
     let item = findInspirationCase(activeCatalog, sourceId, caseId)
     // A browser can retain a manually refreshed catalog across a plugin restart.
     // Resolve one unknown case against the fixed upstream source, then keep the
     // result in this process. Do not retry arbitrary misses indefinitely.
-    if (item === undefined && !triedRefreshForUnknownCase) {
+    if (item === undefined && sourceId === INSPIRATION_SOURCE_ID && !triedRefreshForUnknownCase) {
       triedRefreshForUnknownCase = true
       try {
         activeCatalog = await fetchSnapshot(request)
@@ -74,6 +81,7 @@ export function createInspirationRoute(deps: InspirationRouteDeps = {}) {
     if (item === undefined) return jsonError(res, 404, 'case-not-found')
     const cacheKey = `${sourceId}_${caseId}`
     const requestEpoch = diskCacheEpoch
+    const source = activeCatalog.sources.find(candidate => candidate.id === sourceId)
     // 1. 先查磁盘缓存——命中则零网络开销直接返回 (纯异步非阻塞)
     const cached = await readImageCache(cacheKey)
     if (cached !== undefined) {
@@ -87,8 +95,7 @@ export function createInspirationRoute(deps: InspirationRouteDeps = {}) {
       return
     }
     // 2. 磁盘未命中，走三源瀑布降级拉取
-    const source = activeCatalog.sources.find(candidate => candidate.id === sourceId)
-    for (const imageUrl of imageUrls(source?.version, item.imagePath)) {
+    for (const imageUrl of imageUrls(source, item.imagePath)) {
       try {
         const upstream = await request(imageUrl, {
           signal: AbortSignal.timeout(12_000),
@@ -185,16 +192,23 @@ async function fetchSnapshot(request: typeof fetch): Promise<ResolvedInspiration
   return catalog
 }
 
-function imageUrls(version: string | undefined, imagePath: string): string[] {
-  const commit = typeof version === 'string' && /^[a-f0-9]{40}$/i.test(version)
-    ? version
+function imageUrls(source: ResolvedSource | undefined, imagePath: string): string[] {
+  if (source?.id === HANDDRAW_SOURCE_ID) {
+    // handraw-style 静态仓库：jsDelivr CDN 优先，GitHub Raw 兜底；版本钉死在快照提交。
+    return [
+      `https://cdn.jsdelivr.net/gh/yang0/handraw-style@${HANDDRAW_SOURCE_VERSION}${imagePath}`,
+      `https://raw.githubusercontent.com/yang0/handraw-style/${HANDDRAW_SOURCE_VERSION}${imagePath}`,
+    ]
+  }
+  const commit = typeof source?.version === 'string' && /^[a-f0-9]{40}$/i.test(source.version)
+    ? source.version
     : INSPIRATION_SOURCE_VERSION
   // 三源瀑布降级：jsDelivr 国内有网宿 CDN 节点可直连 → 苍何镜像 → GitHub Raw（需 VPN）
   // imagePath 形如 /images/case544.jpg，GitHub 仓库实际路径为 data/images/...
   return [
     `https://cdn.jsdelivr.net/gh/freestylefly/awesome-gpt-image-2@${commit}/data${imagePath}`,
     `${INSPIRATION_SOURCE_IMAGE_MIRROR}${imagePath}`,
-    `${REMOTE_RAW}/${commit}/data${imagePath}`,
+    `https://raw.githubusercontent.com/freestylefly/awesome-gpt-image-2/${commit}/data${imagePath}`,
   ]
 }
 

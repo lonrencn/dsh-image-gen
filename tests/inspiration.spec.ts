@@ -68,10 +68,25 @@ describe('inspiration HTTP route', () => {
     const url = await start(upstream)
     const catalog = await fetch(`${url}/catalog`, { headers: { origin: url } })
     expect(catalog.status).toBe(200)
-    expect((await catalog.json() as { sources: unknown[] }).sources).toHaveLength(1)
+    const sources = (await catalog.json() as { sources: { id: string; cases: unknown[] }[] }).sources
+    expect(sources.map(source => source.id)).toEqual(['awesome-gpt-image-2', 'handraw-style'])
+    expect(sources[1]!.cases.length).toBeGreaterThan(0)
     const blocked = await fetch(`${url}/image/not-an-allowed-source/1`, { headers: { origin: url } })
     expect(blocked.status).toBe(404)
     expect(upstream).not.toHaveBeenCalled()
+  })
+
+  it('proxies handraw-style images from the pinned commit only', async () => {
+    const upstream = vi.fn<typeof fetch>(async () => new Response(new Uint8Array([7]), {
+      status: 200,
+      headers: { 'content-type': 'image/webp', 'content-length': '1' },
+    }))
+    const url = await start(upstream)
+    const handdraw = BUNDLED_INSPIRATION_CATALOG.sources.find(source => source.id === 'handraw-style')
+    const item = handdraw!.cases[0]!
+    const response = await fetch(`${url}/image/handraw-style/${item.id}`, { headers: { origin: url } })
+    expect(response.status).toBe(200)
+    expect(upstream).toHaveBeenCalledWith(`https://cdn.jsdelivr.net/gh/yang0/handraw-style@50998b094866e22007001161bca12c892a3796b1${item.imagePath}`, expect.objectContaining({ redirect: 'error' }))
   })
 
   it('resolves a known case server-side and proxies only an allowed image response', async () => {

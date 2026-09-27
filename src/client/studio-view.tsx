@@ -154,6 +154,8 @@ export const StudioView: FC<{
   credentialEvents?: { listen(callback: () => void): () => void } | undefined
   workspace?: StudioWorkspaceProps | null | undefined
   initialPrompt?: string | undefined
+  /** Reference image applied once on arrival (e.g. an inspiration card used as 图生图 input). */
+  initialReference?: File | undefined
   /**
    * Canvas surface opened first: 'preview' (single-image viewer, the default)
    * or 'infinite' (the tldraw editor). The right-sidebar variant opens the
@@ -168,8 +170,9 @@ export const StudioView: FC<{
    */
   showInfiniteCanvasHint?: boolean
   onInitialPromptApplied?(): void
+  onInitialReferenceApplied?(): void
   onOpenInspiration?(): void
-}> = ({ locale, credentialEvents, workspace, initialPrompt, initialCanvasSurface, showInfiniteCanvasHint, onInitialPromptApplied, onOpenInspiration }) => {
+}> = ({ locale, credentialEvents, workspace, initialPrompt, initialReference, initialCanvasSurface, showInfiniteCanvasHint, onInitialPromptApplied, onInitialReferenceApplied, onOpenInspiration }) => {
   const [lang, setLang] = useState<'zh' | 'en'>(() => locale?.getSnapshot?.().active?.startsWith('en') ? 'en' : 'zh')
   const [config, setConfig] = useState<StudioConfigResponse | null>(null)
   const [configLoading, setConfigLoading] = useState(true)
@@ -718,6 +721,18 @@ export const StudioView: FC<{
     }))
     setReferences(prev => [...prev, ...newItems])
   }
+
+  // Apply an externally supplied reference (inspiration card) exactly once per
+  // File identity; addReferenceFiles is re-created per render, so a ref guard
+  // replaces it in the dependency list.
+  const appliedReferenceRef = useRef<File | null>(null)
+  useEffect(() => {
+    if (initialReference === undefined || appliedReferenceRef.current === initialReference) return
+    appliedReferenceRef.current = initialReference
+    void addReferenceFiles([initialReference])
+    setMode('edit')
+    onInitialReferenceApplied?.()
+  }, [initialReference, onInitialReferenceApplied])
 
   const removeReference = (id: string) => {
     const target = referencesRef.current.find(item => item.id === id)
