@@ -21,11 +21,12 @@ export const HANDDRAW_SOURCE_VERSION = '50998b094866e22007001161bca12c892a3796b1
 export const HANDDRAW_SOURCE_UPDATED_AT = '2026-09-27T14:24:28+08:00'
 export const HANDDRAW_SOURCE_REPOSITORY = 'https://github.com/yang0/handraw-style'
 /**
- * Bundled image revision for the handdraw source. The upstream pin stays fixed
- * while the packaged assets/style-tiles change; browsers key their persistent
- * image cache on this value, so bump it whenever tiles are regenerated.
+ * Image revision for the handdraw source. The upstream pin stays fixed while
+ * the referenced image paths change (sheet crops → upstream individuals);
+ * browsers key their persistent image cache on this value, so bump it
+ * whenever the source's images change.
  */
-export const HANDDRAW_IMAGE_REVISION = '2'
+export const HANDDRAW_IMAGE_REVISION = '3'
 
 export interface InspirationCase {
   id: string

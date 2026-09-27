@@ -76,23 +76,21 @@ describe('inspiration HTTP route', () => {
     expect(upstream).not.toHaveBeenCalled()
   })
 
-  it('serves bundled handraw-style tiles locally and pins remote images to the snapshot commit', async () => {
+  it('pins handdraw-style images, including per-style individuals, to the snapshot commit', async () => {
     const upstream = vi.fn<typeof fetch>(async () => new Response(new Uint8Array([7]), {
       status: 200,
       headers: { 'content-type': 'image/webp', 'content-length': '1' },
     }))
     const url = await start(upstream)
     const handdraw = BUNDLED_INSPIRATION_CATALOG.sources.find(source => source.id === 'handraw-style')
-    const styleCase = handdraw!.cases.find(candidate => candidate.imagePath.startsWith('/images/style-tiles/'))!
+    const styleCase = handdraw!.cases.find(candidate => candidate.imagePath.startsWith('/images/individual/'))!
     const remoteCase = handdraw!.cases.find(candidate => candidate.imagePath.startsWith('/images/colors/'))!
-    const tile = await fetch(`${url}/image/handraw-style/${styleCase.id}`, { headers: { origin: url } })
-    expect(tile.status).toBe(200)
-    expect(tile.headers.get('content-type')).toBe('image/webp')
-    expect(Number(tile.headers.get('content-length'))).toBeGreaterThan(1000)
-    expect(upstream).not.toHaveBeenCalled()
-    const response = await fetch(`${url}/image/handraw-style/${remoteCase.id}`, { headers: { origin: url } })
-    expect(response.status).toBe(200)
-    expect(upstream).toHaveBeenCalledWith(`https://cdn.jsdelivr.net/gh/yang0/handraw-style@50998b094866e22007001161bca12c892a3796b1${remoteCase.imagePath}`, expect.objectContaining({ redirect: 'error' }))
+    expect(styleCase.imagePath).toBe('/images/individual/001-200/001.webp')
+    for (const testCase of [styleCase, remoteCase]) {
+      const response = await fetch(`${url}/image/handraw-style/${testCase.id}`, { headers: { origin: url } })
+      expect(response.status).toBe(200)
+      expect(upstream).toHaveBeenCalledWith(`https://cdn.jsdelivr.net/gh/yang0/handraw-style@50998b094866e22007001161bca12c892a3796b1${testCase.imagePath}`, expect.objectContaining({ redirect: 'error' }))
+    }
   })
 
   it('resolves a known case server-side and proxies only an allowed image response', async () => {

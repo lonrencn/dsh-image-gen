@@ -27,10 +27,12 @@ for (const file of readdirSync(join(refs, 'layouts'))) {
 }
 
 const LAYOUT_CATEGORY_ZH = { 'social-card': '社媒卡', infographic: '信息图', 'comic-storyboard': '漫画分镜' }
-// Styles have no per-item image upstream; scripts/crop-handraw-tiles.py slices
-// the 4x4 contact sheets into per-style tiles bundled under assets/style-tiles.
-function styleTileImage(number) {
-  return `/images/style-tiles/s-${String(Number.parseInt(number, 10)).padStart(3, '0')}.webp`
+// Upstream ships per-style webps under images/individual, split into two
+// numbered bands; layouts/colors keep their own directories.
+function styleImage(number) {
+  const n = Number.parseInt(number, 10)
+  const band = n <= 200 ? '001-200' : '201-400'
+  return `/images/individual/${band}/${String(n).padStart(3, '0')}.webp`
 }
 
 const cases = []
@@ -49,7 +51,7 @@ for (const s of styles) {
   cases.push({
     id: `s-${s.number}`,
     title: `#${s.number} ${s.generation_name}`,
-    image: styleTileImage(s.number),
+    image: styleImage(s.number),
     imageAlt: `手绘风格 ${s.number} ${s.generation_name}`,
     sourceLabel: s.reference,
     prompt,

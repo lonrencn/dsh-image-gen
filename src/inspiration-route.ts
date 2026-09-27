@@ -2,8 +2,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import {
   BUNDLED_INSPIRATION_CATALOG,
   HANDDRAW_SOURCE_ID,
@@ -25,13 +24,6 @@ const MAX_IMAGE_BYTES = 12 * 1024 * 1024
 const CACHE_MAX_BYTES = 200 * 1024 * 1024
 const REMOTE_API = 'https://api.github.com/repos/freestylefly/awesome-gpt-image-2/commits/main'
 const REMOTE_RAW = 'https://raw.githubusercontent.com/freestylefly/awesome-gpt-image-2'
-
-// Per-style tiles cropped from the handraw-style contact sheets and bundled
-// with the package (assets/style-tiles). Both src/index.ts and lib/index.js sit
-// exactly one level below the package root, so the relative hop resolves in
-// source launches and built deployments alike.
-const STYLE_TILES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets', 'style-tiles')
-const STYLE_TILE_PATH = /^\/images\/style-tiles\/(s-\d{3})\.webp$/
 
 export interface InspirationRouteDeps {
   fetch?: typeof fetch
@@ -90,18 +82,6 @@ export function createInspirationRoute(deps: InspirationRouteDeps = {}) {
     const cacheKey = `${sourceId}_${caseId}`
     const requestEpoch = diskCacheEpoch
     const source = activeCatalog.sources.find(candidate => candidate.id === sourceId)
-    // 0. 本地瓦片（handraw 风格单图，随包分发）：先于磁盘缓存，避免换包后
-    // 旧拼图的缓存条目盖住新瓦片。
-    if (sourceId === HANDDRAW_SOURCE_ID) {
-      const tile = STYLE_TILE_PATH.exec(item.imagePath)
-      if (tile !== null) {
-        try {
-          const bytes = await readFile(join(STYLE_TILES_DIR, `${tile[1]}.webp`))
-          sendImage(req, res, 200, bytes, 'image/webp')
-          return
-        } catch {}
-      }
-    }
     // 1. 先查磁盘缓存——命中则零网络开销直接返回 (纯异步非阻塞)
     const cached = await readImageCache(cacheKey)
     if (cached !== undefined) {
