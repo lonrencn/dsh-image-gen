@@ -97,13 +97,7 @@ export function createInspirationRoute(deps: InspirationRouteDeps = {}) {
       if (tile !== null) {
         try {
           const bytes = await readFile(join(STYLE_TILES_DIR, `${tile[1]}.webp`))
-          res.writeHead(200, {
-            'content-type': 'image/webp',
-            'content-length': String(bytes.byteLength),
-            'cache-control': 'private, max-age=604800',
-            'x-content-type-options': 'nosniff',
-          })
-          res.end(bytes)
+          sendImage(req, res, 200, bytes, 'image/webp')
           return
         } catch {}
       }
@@ -111,13 +105,7 @@ export function createInspirationRoute(deps: InspirationRouteDeps = {}) {
     // 1. 先查磁盘缓存——命中则零网络开销直接返回 (纯异步非阻塞)
     const cached = await readImageCache(cacheKey)
     if (cached !== undefined) {
-      res.writeHead(200, {
-        'content-type': cached.type,
-        'content-length': String(cached.data.byteLength),
-        'cache-control': 'private, max-age=604800',
-        'x-content-type-options': 'nosniff',
-      })
-      res.end(cached.data)
+      sendImage(req, res, 200, cached.data, cached.type)
       return
     }
     // 2. 磁盘未命中，走三源瀑布降级拉取
@@ -140,13 +128,7 @@ export function createInspirationRoute(deps: InspirationRouteDeps = {}) {
         if (requestEpoch === diskCacheEpoch) {
           writeImageCache(cacheKey, type, body)
         }
-        res.writeHead(200, {
-          'content-type': type,
-          'content-length': String(body.byteLength),
-          'cache-control': 'private, max-age=604800',
-          'x-content-type-options': 'nosniff',
-        })
-        res.end(body)
+        sendImage(req, res, 200, body, type)
         return
       } catch {}
     }
@@ -155,7 +137,32 @@ export function createInspirationRoute(deps: InspirationRouteDeps = {}) {
 }
 
 /**
- * 边下边读的流式防爆读取器：累计超过 maxBytes 立即 cancel reader 并返回 null。
+ * 发送图片字节。缓存策略是 ETag 协商而非长 max-age：同一 URL 的图片内容
+ * 会随包更新（风格瓦片重裁、上游重拉），浏览器必须每次带 If-None-Match
+ * 回源确认，未变化时以 304 复用本地副本。
+ */
+function sendImage(req: IncomingMessage, res: ServerResponse, status: number, data: Uint8Array, type: string): void {
+  const etag = `"${createHash('sha1').update(data).digest('hex').slice(0, 16)}"`
+  const headers: Record<string, string> = {
+    etag,
+    'cache-control': 'private, no-cache',
+    'x-content-type-options': 'nosniff',
+  }
+  if (status === 200) {
+    headers['content-type'] = type
+    headers['content-length'] = String(data.byteLength)
+  }
+  if (req.headers['if-none-match'] === etag) {
+    res.writeHead(304, headers)
+    res.end()
+    return
+  }
+  res.writeHead(status, headers)
+  res.end(data)
+}
+
+/**
+ * 边下边读的流式防爆读取器：累计超过 maxBytes 立刻 cancel reader 并返回 null。
  * 防御 chunked 传输缺失 content-length 时的内存尖峰。
  */
 async function readLimitedStream(upstream: Response, maxBytes: number): Promise<Uint8Array | null> {
