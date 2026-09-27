@@ -18,8 +18,18 @@ const pending = new Map<string, Promise<Blob>>()
 
 let cacheEpoch = 0
 
-export function fetchInspirationImage(sourceId: string, caseId: string): Promise<Blob> {
-  const key = `${sourceId}:${caseId}`
+/**
+ * Resolve the IndexedDB key for one image. `rev` (the source's imageRevision,
+ * falling back to its version) namespaces the cache by image content: when a
+ * source re-packages its images at stable case IDs, a bumped rev orphans the
+ * old blobs instead of serving them forever.
+ */
+function cacheKey(sourceId: string, caseId: string, rev: string | undefined): string {
+  return rev === undefined ? `${sourceId}:${caseId}` : `${sourceId}:${caseId}@${rev}`
+}
+
+export function fetchInspirationImage(sourceId: string, caseId: string, rev?: string): Promise<Blob> {
+  const key = cacheKey(sourceId, caseId, rev)
   const existing = pending.get(key)
   if (existing !== undefined) return existing
   const requestEpoch = cacheEpoch
@@ -43,8 +53,8 @@ export function fetchInspirationImage(sourceId: string, caseId: string): Promise
   return task
 }
 
-export async function evictInspirationImage(sourceId: string, caseId: string): Promise<void> {
-  const key = `${sourceId}:${caseId}`
+export async function evictInspirationImage(sourceId: string, caseId: string, rev?: string): Promise<void> {
+  const key = cacheKey(sourceId, caseId, rev)
   pending.delete(key)
   const db = await openDatabase()
   if (db === undefined) return

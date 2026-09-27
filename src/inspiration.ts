@@ -20,6 +20,12 @@ export const HANDDRAW_SOURCE_ID = 'handraw-style'
 export const HANDDRAW_SOURCE_VERSION = '50998b094866e22007001161bca12c892a3796b1'
 export const HANDDRAW_SOURCE_UPDATED_AT = '2026-09-27T14:24:28+08:00'
 export const HANDDRAW_SOURCE_REPOSITORY = 'https://github.com/yang0/handraw-style'
+/**
+ * Bundled image revision for the handdraw source. The upstream pin stays fixed
+ * while the packaged assets/style-tiles change; browsers key their persistent
+ * image cache on this value, so bump it whenever tiles are regenerated.
+ */
+export const HANDDRAW_IMAGE_REVISION = '2'
 
 export interface InspirationCase {
   id: string
@@ -43,6 +49,8 @@ export interface InspirationSource {
   version: string
   integritySha256?: string | undefined
   updatedAt?: string | undefined
+  /** Content revision of the source's images; absent means `version` covers it. */
+  imageRevision?: string | undefined
   categories: string[]
   styles: string[]
   scenes: string[]
@@ -73,6 +81,7 @@ interface InspirationSourceMeta {
   repository: string
   version: string
   updatedAt: string | undefined
+  imageRevision?: string | undefined
 }
 
 /** Parse one snapshot document defensively before it becomes application data. */
@@ -116,6 +125,7 @@ function parseInspirationSource(value: unknown, meta: InspirationSourceMeta): Re
     repository: safeHttpUrl(document?.repository) ?? meta.repository,
     version: meta.version,
     updatedAt: optionalText(document?.updatedAt, 60) ?? meta.updatedAt,
+    ...(meta.imageRevision !== undefined ? { imageRevision: meta.imageRevision } : {}),
     categories: strings(document?.categories, 80, 120),
     styles: strings(document?.styles, 80, 120),
     scenes: strings(document?.scenes, 80, 120),
@@ -169,6 +179,7 @@ export const BUNDLED_INSPIRATION_CATALOG: ResolvedInspirationCatalog = {
       repository: HANDDRAW_SOURCE_REPOSITORY,
       version: HANDDRAW_SOURCE_VERSION,
       updatedAt: HANDDRAW_SOURCE_UPDATED_AT,
+      imageRevision: HANDDRAW_IMAGE_REVISION,
     }),
   ],
 }

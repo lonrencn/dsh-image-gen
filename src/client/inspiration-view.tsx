@@ -137,7 +137,7 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
   const [copied, setCopied] = useState(false)
   const [favorites, setFavorites] = useState<Set<string>>(() => loadInspirationFavorites())
   const [onlyFavorites, setOnlyFavorites] = useState(false)
-  const [lightboxCase, setLightboxCase] = useState<{ sourceId: string; caseId: string; title: string; alt: string } | null>(null)
+  const [lightboxCase, setLightboxCase] = useState<{ sourceId: string; caseId: string; revision: string; title: string; alt: string } | null>(null)
   const [toast, setToast] = useState<{ text: string; isError?: boolean } | null>(null)
   const [referenceBusy, setReferenceBusy] = useState(false)
   const toastTimerRef = useRef<number | null>(null)
@@ -234,7 +234,7 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
     if (selected === null || source === null || onUseReference === undefined) return
     setReferenceBusy(true)
     try {
-      const blob = await fetchInspirationImage(source.id, selected.id)
+      const blob = await fetchInspirationImage(source.id, selected.id, source.imageRevision ?? source.version)
       const ext = blob.type === 'image/jpeg' ? 'jpg' : blob.type.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png'
       onUseReference(new File([blob], `inspiration-${selected.id}.${ext}`, { type: blob.type.startsWith('image/') ? blob.type : 'image/webp' }), selected.prompt)
     } catch {
@@ -430,6 +430,7 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
                     key={item.id}
                     item={item}
                     sourceId={source.id}
+                    sourceRevision={source.imageRevision ?? source.version}
                     selected={selected?.id === item.id}
                     isFavorited={favorites.has(item.id)}
                     language={language}
@@ -455,10 +456,10 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
             <>
               <div
                 className="dsh-ig-inspiration-inspector-image"
-                onClick={() => setLightboxCase({ sourceId: source.id, caseId: selected.id, title: selected.title, alt: selected.imageAlt })}
+                onClick={() => setLightboxCase({ sourceId: source.id, caseId: selected.id, revision: source.imageRevision ?? source.version, title: selected.title, alt: selected.imageAlt })}
                 title={t('zoomHint')}
               >
-                <InspirationImage sourceId={source.id} caseId={selected.id} alt={selected.imageAlt} retryLabel={t('retry')} />
+                <InspirationImage sourceId={source.id} caseId={selected.id} revision={source.imageRevision ?? source.version} alt={selected.imageAlt} retryLabel={t('retry')} />
                 <span className="dsh-ig-inspiration-inspector-zoom-hint">
                   <Maximize2 size={11} />
                   {t('zoomHint')}
@@ -508,7 +509,7 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
             <X size={18} />
           </button>
           <div className="dsh-ig-inspiration-lightbox-img-wrap">
-            <InspirationImage sourceId={lightboxCase.sourceId} caseId={lightboxCase.caseId} alt={lightboxCase.alt} retryLabel={t('retry')} />
+            <InspirationImage sourceId={lightboxCase.sourceId} caseId={lightboxCase.caseId} revision={lightboxCase.revision} alt={lightboxCase.alt} retryLabel={t('retry')} />
           </div>
           <div className="dsh-ig-inspiration-lightbox-caption">{lightboxCase.title}</div>
         </div>
@@ -557,6 +558,7 @@ export const InspirationView: FC<{ locale?: LocaleService | undefined; onUseProm
 const InspirationCard: FC<{
   item: InspirationCase
   sourceId: string
+  sourceRevision: string
   selected: boolean
   isFavorited: boolean
   language: Language
@@ -564,7 +566,7 @@ const InspirationCard: FC<{
   retryLabel?: string | undefined
   onSelect(): void
   onToggleFavorite(): void
-}> = ({ item, sourceId, selected, isFavorited, language, featuredLabel, retryLabel, onSelect, onToggleFavorite }) => (
+}> = ({ item, sourceId, sourceRevision, selected, isFavorited, language, featuredLabel, retryLabel, onSelect, onToggleFavorite }) => (
   <button type="button" className={`dsh-ig-inspiration-card ${selected ? 'is-selected' : ''}`} onClick={onSelect}>
     <div className="dsh-ig-inspiration-visual">
       {item.featured && <span className="dsh-ig-inspiration-featured"><Sparkles size={10} />{featuredLabel}</span>}
@@ -579,7 +581,7 @@ const InspirationCard: FC<{
       >
         <Star size={13} className={isFavorited ? 'fill-star' : ''} />
       </button>
-      <InspirationImage sourceId={sourceId} caseId={item.id} alt={item.imageAlt} retryLabel={retryLabel} />
+      <InspirationImage sourceId={sourceId} caseId={item.id} revision={sourceRevision} alt={item.imageAlt} retryLabel={retryLabel} />
     </div>
     <div className="dsh-ig-inspiration-card-copy">
       <strong>{item.title}</strong>
@@ -588,7 +590,7 @@ const InspirationCard: FC<{
   </button>
 )
 
-const InspirationImage: FC<{ sourceId: string; caseId: string; alt: string; retryLabel?: string | undefined }> = ({ sourceId, caseId, alt, retryLabel = 'Retry' }) => {
+const InspirationImage: FC<{ sourceId: string; caseId: string; revision: string; alt: string; retryLabel?: string | undefined }> = ({ sourceId, caseId, revision, alt, retryLabel = 'Retry' }) => {
   const [node, setNode] = useState<HTMLDivElement | null>(null)
   const [visible, setVisible] = useState(false)
   const [url, setUrl] = useState<string | null>(null)
@@ -611,7 +613,7 @@ const InspirationImage: FC<{ sourceId: string; caseId: string; alt: string; retr
       urlRef.current = null
     }
     setUrl(null)
-    void fetchInspirationImage(sourceId, caseId).then(blob => {
+    void fetchInspirationImage(sourceId, caseId, revision).then(blob => {
       if (!active) return
       const next = URL.createObjectURL(blob)
       if (urlRef.current !== null) {
@@ -623,7 +625,7 @@ const InspirationImage: FC<{ sourceId: string; caseId: string; alt: string; retr
     return () => {
       active = false
     }
-  }, [visible, sourceId, caseId])
+  }, [visible, sourceId, caseId, revision])
 
   useEffect(() => {
     return () => {
@@ -660,8 +662,8 @@ const InspirationImage: FC<{ sourceId: string; caseId: string; alt: string; retr
                   urlRef.current = null
                 }
                 setUrl(null)
-                void evictInspirationImage(sourceId, caseId)
-                  .then(() => fetchInspirationImage(sourceId, caseId))
+                void evictInspirationImage(sourceId, caseId, revision)
+                  .then(() => fetchInspirationImage(sourceId, caseId, revision))
                   .then(blob => {
                     const next = URL.createObjectURL(blob)
                     if (urlRef.current !== null) {
