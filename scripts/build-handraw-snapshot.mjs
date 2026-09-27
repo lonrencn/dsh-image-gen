@@ -93,7 +93,7 @@ for (const c of colors) {
     title: `${c.id} ${c.name_zh}`,
     image: `/images/colors/${c.id}.webp`,
     imageAlt: `主题色 ${c.id} ${c.name_zh}`,
-    prompt: `主题色 ${c.id} · ${c.name_zh}（${c.name_en}）——${c.quote_zh}。\n${c.prompt_zh}\n${c.prompt_en}`,
+    prompt: `主题色 ${c.id} · ${c.name_zh}（${c.name_en}）——${c.quote_zh}。\n${c.prompt_zh}\n${c.prompt_en}\n约束：主题色仅用于画面配色，禁止把色名、色号或色值渲染成图内文字。`,
     promptPreview: `${c.name_zh} · ${c.quote_zh}`,
     category,
     styles: [c.name_zh],

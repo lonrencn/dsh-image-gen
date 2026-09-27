@@ -77,7 +77,7 @@ describe('image tool registration', () => {
   it('installs the settings section through the modern service API', () => {
     const { ctx, tools, installSection } = harnessContext()
     apply(ctx, { provider: 'google', saveToWorkspace: false })
-    expect(tools.map(tool => tool.name)).toEqual(['canvas_state', 'view_canvas', 'generate_image', 'edit_image', 'find_inspiration'])
+    expect(tools.map(tool => tool.name)).toEqual(['canvas_state', 'view_canvas', 'generate_image', 'generate_images', 'edit_image', 'find_inspiration'])
     expect(installSection).toHaveBeenCalledTimes(1)
     const [owner, ns, schema, entry, hooks] = installSection.mock.calls[0] as unknown as [Context, string, unknown, unknown, { setSource(): void; onChange(): void }]
     expect(owner).toBe(ctx)
@@ -94,7 +94,7 @@ describe('image tool registration', () => {
   it('registers canvas tools, generate_image, and edit_image', () => {
     const { ctx, tools } = harnessContext()
     apply(ctx, { provider: 'google', saveToWorkspace: false })
-    expect(tools.map(tool => tool.name)).toEqual(['canvas_state', 'view_canvas', 'generate_image', 'edit_image', 'find_inspiration'])
+    expect(tools.map(tool => tool.name)).toEqual(['canvas_state', 'view_canvas', 'generate_image', 'generate_images', 'edit_image', 'find_inspiration'])
   })
 
   it('serves reusable inspiration prompts to the agent with bounded hits', async () => {
@@ -476,6 +476,43 @@ describe('image tool registration', () => {
     expect(value.provider).toBe('google')
     const headers = (fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.headers as Record<string, string>
     expect(headers['x-goog-api-key']).toBe('sk-live-key')
+  })
+
+  it('generates a batch sequentially and isolates per-item failures', async () => {
+    const { ctx, tools } = harnessContext()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ output_image: { data: Buffer.from('one').toString('base64'), mime_type: 'image/jpeg' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ output_image: { data: Buffer.from('two').toString('base64'), mime_type: 'image/jpeg' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response('boom', { status: 500 }))
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, { provider: 'google', saveToWorkspace: false })
+
+    const value = await toolByName(tools, 'generate_images').execute(
+      { prompts: ['first prompt', 'second prompt', 'third prompt'] },
+      { signal: new AbortController().signal } as never,
+    ) as { images: { prompt: string; provider: string; attachment: { attachmentId: string } }[]; failures: { index: number; error: string }[] }
+    expect(value.images).toHaveLength(2)
+    expect(value.images.map(image => image.prompt)).toEqual(['first prompt', 'second prompt'])
+    for (const image of value.images) {
+      expect(image.provider).toBe('google')
+      expect(image.attachment.attachmentId).toContain('sha256:')
+    }
+    expect(value.failures).toEqual([{ index: 2, prompt: 'third prompt', error: expect.stringContaining('500') }])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    const rendered = toolByName(tools, 'generate_images').output.render({}, value as never)
+    expect(rendered[0]!.type).toBe('text')
+    expect((rendered[0] as { text: string }).text).toContain('Generated 2 of 3 images')
+  })
+
+  it('rejects empty and oversized generate_images batches before generating', async () => {
+    const { ctx, tools } = harnessContext()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, { provider: 'google', saveToWorkspace: false })
+    const tool = toolByName(tools, 'generate_images')
+    await expect(tool.execute({ prompts: [] }, { signal: new AbortController().signal } as never)).rejects.toThrow('at least one prompt')
+    await expect(tool.execute({ prompts: Array.from({ length: 11 }, () => 'p') }, { signal: new AbortController().signal } as never)).rejects.toThrow('at most 10')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('honours a per-call provider override without touching the saved config', async () => {

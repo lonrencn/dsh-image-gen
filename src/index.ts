@@ -54,6 +54,23 @@ interface InspirationSearchValue {
   hits: { sourceId: string; id: string; title: string; category: string; prompt: string }[]
 }
 
+/** Per-item generation request fields shared by generate_image and generate_images. */
+interface SingleGenerationArgs {
+  prompt: string
+  provider?: string
+  model?: string
+  aspect_ratio?: string
+  image_size?: string
+  size?: string
+  workflow?: string
+}
+
+/** Ordered per-item outcomes for the generate_images batch tool. */
+interface BatchGeneratedValue {
+  images: { attachment: ImageAttachmentRef; provider: string; model: string; output: string; savedTo?: string; saveError?: string; prompt: string }[]
+  failures: { index: number; prompt: string; error: string }[]
+}
+
 /** Validate the untrusted per-call provider override from tool arguments. */
 function providerOverrideOf(value: unknown): ImageProvider | undefined {
   if (value === undefined || value === null || value === '') return undefined
@@ -189,6 +206,52 @@ export function apply(ctx: Context, config: Config = {}): void {
     },
   }), 'dsh-image-gen: inspiration route')
 
+  /** Per-item generation request shared by generate_image and generate_images. */
+  const generateSingle = async (args: SingleGenerationArgs, exec: { agent?: { session: { header: { cwd?: string } } }; signal: AbortSignal }): Promise<GeneratedValue> => {
+    const active = resolveProvider(withProviderOverrides(current(), providerOverrideOf(args.provider), args.model))
+    if (active.provider === 'comfyui') {
+      const workflow = selectComfyUIWorkflow(active, args.workflow)
+      const generated = await generateComfyUIImage({
+        baseURL: active.baseURL,
+        workflowJson: workflow.json,
+        prompt: mergeComfyUIPrompt(workflow.presetPrompt, args.prompt),
+        timeoutMs: active.timeoutMs,
+        maxBytes: ctx.attachments.imageLimits.maxImageBytes,
+        signal: exec.signal,
+      })
+      return saveGenerated(ctx, generated, active.provider, workflow.name, 'API workflow', current(), exec, knownWorkspaceRoots)
+    }
+    if (active.provider === 'chatgpt-sub' || active.provider === 'grok-sub' || active.provider === 'google-sub') {
+      const generated = await generateSubscriptionImage({
+        manager: subscriptionManager,
+        provider: active.provider,
+        prompt: args.prompt,
+        ...(args.size !== undefined ? { size: args.size } : {}),
+        maxBytes: ctx.attachments.imageLimits.maxImageBytes,
+        signal: exec.signal,
+      })
+      return saveGenerated(ctx, generated, active.provider, active.model, 'subscription', current(), exec, knownWorkspaceRoots)
+    }
+    const credential = await requireApiKey(ctx, active.provider, 'generate_image')
+    if (active.provider === 'google') {
+      const aspectRatio = (args.aspect_ratio ?? active.aspectRatio) as AspectRatio
+      const imageSize = (args.image_size ?? active.imageSize) as ImageSize
+      const generated = await generateGoogleImage({ apiKey: credential, endpoint: active.endpoint, model: active.model, prompt: args.prompt, aspectRatio, imageSize, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
+      return saveGenerated(ctx, generated, active.provider, active.model, `${aspectRatio}, ${imageSize}`, current(), exec, knownWorkspaceRoots)
+    }
+    if (active.provider === 'dashscope') {
+      const size = args.size ?? active.imageSize
+      const generated = await generateDashScopeImage({ apiKey: credential, endpoint: active.endpoint, model: active.model, prompt: args.prompt, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
+      return saveGenerated(ctx, generated, active.provider, active.model, size, current(), exec, knownWorkspaceRoots)
+    }
+    const size = args.size ?? active.imageSize
+    // Ark output controls exist only on the Seedream profile; every other
+    // provider in this branch ignores them.
+    const arkOptions = active.provider === 'seedream' ? active.arkOptions : undefined
+    const generated = await generateOpenAICompatibleImage({ provider: active.provider, apiKey: credential, baseURL: active.baseURL, model: active.model, prompt: args.prompt, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal, ...(arkOptions === undefined ? {} : { arkOptions }) })
+    return saveGenerated(ctx, generated, active.provider, active.model, size, current(), exec, knownWorkspaceRoots)
+  }
+
   ctx.tools.register(defineTool({
     name: 'generate_image',
     description: 'Generate a new image with the configured provider. Use when the user asks to create or draw a new image; use edit_image instead when they want to change an existing image. Give a complete visual prompt including subject, composition, style, lighting, and any exact text that should appear. The optional provider/model arguments switch provider or model for this call only when the user asks for a specific one. A successful image is attached directly to the conversation and may also be saved under the session workspace. Do not call read, glob, or other tools to locate or verify the image.',
@@ -203,55 +266,82 @@ export function apply(ctx: Context, config: Config = {}): void {
     },
     output: imageOutput('Generated'),
     async execute(args, exec): Promise<GeneratedValue> {
-      const active = resolveProvider(withProviderOverrides(current(), providerOverrideOf(args.provider), args.model))
-      if (active.provider === 'comfyui') {
-        const workflow = selectComfyUIWorkflow(active, args.workflow)
-        const generated = await generateComfyUIImage({
-          baseURL: active.baseURL,
-          workflowJson: workflow.json,
-          prompt: mergeComfyUIPrompt(workflow.presetPrompt, args.prompt),
-          timeoutMs: active.timeoutMs,
-          maxBytes: ctx.attachments.imageLimits.maxImageBytes,
-          signal: exec.signal,
-        })
-        return saveGenerated(ctx, generated, active.provider, workflow.name, 'API workflow', current(), exec, knownWorkspaceRoots)
-      }
-      if (active.provider === 'chatgpt-sub' || active.provider === 'grok-sub' || active.provider === 'google-sub') {
-        const generated = await generateSubscriptionImage({
-          manager: subscriptionManager,
-          provider: active.provider,
-          prompt: args.prompt,
-          ...(args.size !== undefined ? { size: args.size } : {}),
-          maxBytes: ctx.attachments.imageLimits.maxImageBytes,
-          signal: exec.signal,
-        })
-        return saveGenerated(ctx, generated, active.provider, active.model, 'subscription', current(), exec, knownWorkspaceRoots)
-      }
-      const credential = await requireApiKey(ctx, active.provider, 'generate_image')
-      if (active.provider === 'google') {
-        const aspectRatio = (args.aspect_ratio ?? active.aspectRatio) as AspectRatio
-        const imageSize = (args.image_size ?? active.imageSize) as ImageSize
-        const generated = await generateGoogleImage({ apiKey: credential, endpoint: active.endpoint, model: active.model, prompt: args.prompt, aspectRatio, imageSize, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, active.provider, active.model, `${aspectRatio}, ${imageSize}`, current(), exec, knownWorkspaceRoots)
-      }
-      if (active.provider === 'dashscope') {
-        const size = args.size ?? active.imageSize
-        const generated = await generateDashScopeImage({ apiKey: credential, endpoint: active.endpoint, model: active.model, prompt: args.prompt, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
-        return saveGenerated(ctx, generated, active.provider, active.model, size, current(), exec, knownWorkspaceRoots)
-      }
-      const size = args.size ?? active.imageSize
-      // Ark output controls exist only on the Seedream profile; every other
-      // provider in this branch ignores them.
-      const arkOptions = active.provider === 'seedream' ? active.arkOptions : undefined
-      const generated = await generateOpenAICompatibleImage({ provider: active.provider, apiKey: credential, baseURL: active.baseURL, model: active.model, prompt: args.prompt, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal, ...(arkOptions === undefined ? {} : { arkOptions }) })
-      return saveGenerated(ctx, generated, active.provider, active.model, size, current(), exec, knownWorkspaceRoots)
+      return generateSingle(args, exec)
     },
     presentResult: (_args, result) => imagePresentation(result),
   }))
 
   ctx.tools.register(defineTool({
+    name: 'generate_images',
+    description: 'Generate several images in one call, one per prompt, in order. Use for batches, variations, or illustration sets; prefer generate_image for a single image. Every successful image is attached to the conversation and may be saved under the session workspace. Items generate sequentially; a failed item is reported in the failures list and does not abort the rest. The optional provider/model/size arguments apply to every item.',
+    parameters: {
+      prompts: { type: 'array', items: { type: 'string' }, required: true, description: 'Ordered complete prompts; one image is generated per entry (1-10).' },
+      provider: { type: 'string', enum: ['google', 'openai', 'openai-compat', 'seedream', 'dashscope', 'xai', 'zhipu', 'comfyui', 'chatgpt-sub', 'grok-sub', 'google-sub'], description: 'Optional provider for this call only, applied to every item; omit to use the configured default.' },
+      model: { type: 'string', description: 'Optional model name for this call only, applied to every item.' },
+      aspect_ratio: { type: 'string', enum: ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'], description: 'Optional output aspect ratio for Google Gemini.' },
+      image_size: { type: 'string', enum: ['1K', '2K', '4K'], description: 'Optional output resolution for Google Gemini.' },
+      size: { type: 'string', description: 'Optional dimensions or size tier for OpenAI, Seedream, or DashScope.' },
+      workflow: { type: 'string', description: 'Optional name of the ComfyUI workflow to run; omit to use the active workflow from settings.' },
+    },
+    output: {
+      schema: {
+        type: 'object', additionalProperties: false, properties: {
+          images: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
+            attachment: { type: 'object', required: true, additionalProperties: false, properties: {
+              attachmentId: { type: 'string', required: true }, mediaType: { type: 'string', required: true }, bytes: { type: 'integer', required: true }, width: { type: 'integer', required: true }, height: { type: 'integer', required: true }, name: { type: 'string' },
+            } },
+            provider: { type: 'string', required: true }, model: { type: 'string', required: true }, output: { type: 'string', required: true }, savedTo: { type: 'string' }, saveError: { type: 'string' }, prompt: { type: 'string', required: true },
+          } } },
+          failures: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
+            index: { type: 'integer', required: true }, prompt: { type: 'string', required: true }, error: { type: 'string', required: true },
+          } } },
+        },
+      },
+      render: (_args: unknown, value: BatchGeneratedValue) => [{
+        type: 'text' as const,
+        text: `Generated ${String(value.images.length)} of ${String(value.images.length + value.failures.length)} images.\n${[
+          ...value.images.map(image => `${String(image.prompt).slice(0, 80)} — attachment ${String(image.attachment.attachmentId)}${typeof image.savedTo === 'string' ? `, saved to ${image.savedTo}` : ''}`),
+          ...value.failures.map(failure => `${failure.prompt.slice(0, 80)} — failed: ${failure.error}`),
+        ].join('\n')}\nEach generated image is attached to the conversation; respond without reading or searching for them.`,
+      }],
+    },
+    async execute(args, exec): Promise<BatchGeneratedValue> {
+      if (args.prompts.length === 0) throw new Error('generate_images requires at least one prompt')
+      if (args.prompts.length > 10) throw new Error(`generate_images accepts at most 10 prompts per call (got ${String(args.prompts.length)}); split larger batches into several calls`)
+      const images: BatchGeneratedValue['images'] = []
+      const failures: BatchGeneratedValue['failures'] = []
+      for (const [index, prompt] of args.prompts.entries()) {
+        if (exec.signal.aborted) {
+          failures.push({ index, prompt, error: 'aborted before this image started' })
+          continue
+        }
+        try {
+          const value = await generateSingle({
+            prompt,
+            ...(args.provider !== undefined ? { provider: args.provider } : {}),
+            ...(args.model !== undefined ? { model: args.model } : {}),
+            ...(args.aspect_ratio !== undefined ? { aspect_ratio: args.aspect_ratio } : {}),
+            ...(args.image_size !== undefined ? { image_size: args.image_size } : {}),
+            ...(args.size !== undefined ? { size: args.size } : {}),
+            ...(args.workflow !== undefined ? { workflow: args.workflow } : {}),
+          }, exec)
+          images.push({
+            attachment: value.attachment, provider: value.provider, model: value.model, output: value.output,
+            ...(typeof value.savedTo === 'string' ? { savedTo: value.savedTo } : {}),
+            ...(typeof value.saveError === 'string' ? { saveError: value.saveError } : {}),
+            prompt,
+          })
+        } catch (error) {
+          failures.push({ index, prompt, error: error instanceof Error ? error.message : String(error) })
+        }
+      }
+      return { images, failures }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'edit_image',
-    description: 'Edit, combine, or restyle existing images with the configured provider. Images attached inline to the latest human message are already readable DSH attachments even when no workspace file exists. In that case, call edit_image immediately with prompt only; NEVER call read_image, glob, or shell to locate them, and NEVER invent @ paths. All inline images will be used in upload order. For specific older conversation images use source_attachment_id or source_attachment_ids; both canonical sha256: IDs and full bare SHA-256 digests are accepted. For files the user explicitly names in the workspace use source_path or source_paths. For what the user selected or drew on the image-gen workbench canvas (for example a hand-drawn sketch) use source=canvas_selection; canvas_state can verify a selection exists first. Provide exactly one selector field. Without a selector, images from the latest human message take priority; only when that message has no images does editing fall back to the newest conversation image.',
+    description: 'Edit, combine, or restyle existing images with the configured provider. Images attached inline to the latest human message are already readable DSH attachments even when no workspace file exists. In that case, call edit_image immediately with prompt only; NEVER call read_image, glob, or shell to locate them, and NEVER invent @ paths. All inline images will be used in upload order. For specific older conversation images use source_attachment_id or source_attachment_ids; both canonical sha256: IDs and full bare SHA-256 digests are accepted. For files the user explicitly names in the workspace use source_path or source_paths. For what the user selected or drew on the image-gen workbench canvas (for example a hand-drawn sketch) use source=canvas_selection; canvas_state can verify a selection exists first. Provide exactly one selector field. Without a selector, images from the latest human message take priority; only when that message has no images does editing fall back to the newest conversation image. When the user wants a person, character, or object from the reference images kept as the same identity, write short hard identity-preservation instructions (use the same subject from the references; do not redesign it or synthesize a similar-looking replacement; change only scene, clothing, pose, lighting, style, or composition) instead of long generic appearance descriptions, which make the model replace the subject with a synthesized lookalike.',
     parameters: {
       prompt: { type: 'string', required: true, description: 'Describe the changes to make while preserving everything else that should remain.' },
       provider: { type: 'string', enum: ['google', 'openai', 'openai-compat', 'seedream', 'dashscope', 'xai', 'zhipu', 'comfyui', 'chatgpt-sub', 'grok-sub', 'google-sub'], description: 'Optional provider for this call only (for example when the user asks to use a specific provider); omit to use the configured default. chatgpt-sub, grok-sub, and google-sub edit images through the logged-in subscription account instead of an API key.' },

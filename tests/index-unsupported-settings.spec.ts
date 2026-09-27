@@ -45,7 +45,7 @@ describe('unsupported dsh-settings degradation', () => {
     expect(() => apply(ctx, { provider: 'google', saveToWorkspace: false })).not.toThrow()
 
     // Tools still work off the composition entry; the settings UI is what degrades.
-    expect(tools.map(tool => tool.name)).toEqual(['canvas_state', 'view_canvas', 'generate_image', 'edit_image', 'find_inspiration'])
+    expect(tools.map(tool => tool.name)).toEqual(['canvas_state', 'view_canvas', 'generate_image', 'generate_images', 'edit_image', 'find_inspiration'])
     expect(ctx.logger.warn).toHaveBeenCalledTimes(1)
     expect(vi.mocked(ctx.logger.warn).mock.calls[0]?.[0]).toContain('neither settings API generation')
     // Optional service injection for the canvas system-prompt context:
