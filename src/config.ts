@@ -161,14 +161,16 @@ export interface Config {
 
 /**
  * Mark a schema field live for DSH 0.1.7+: the host serves a plugin's settings
- * form only for `.volatile()` fields and hands `apply` a `Volatile` box per
- * field (unwrapped in `src/index.ts`). Hosts ≤0.1.6 ship a schemastery without
- * the method, so marking is conditional — an unmarked schema stays plain there
- * and the old settings relay keeps working.
+ * form only for fields whose schema meta carries `volatile: true`, and hands
+ * `apply` a `Volatile` box per field (unwrapped in `src/index.ts`). Older
+ * schemastery builds ship without the `.volatile()` method; setting the meta
+ * flag directly marks the same field on every version.
  */
 function volatile<T extends z>(schema: T): T {
   const mark = (schema as unknown as { volatile?: () => T }).volatile
-  return typeof mark === 'function' ? mark.call(schema) : schema
+  if (typeof mark === 'function') return mark.call(schema)
+  schema.meta = { ...schema.meta, volatile: true }
+  return schema
 }
 
 /**
