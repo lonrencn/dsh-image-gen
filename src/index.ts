@@ -16,7 +16,7 @@ import { editDashScopeImage, generateDashScopeImage } from './dashscope.js'
 import { editGoogleImage, generateGoogleImage } from './google.js'
 import { IMAGE_ROUTE, DELETE_ROUTE, SAVE_WORKSPACE_ROUTE, imageAttachmentFromMeta, serveImage, serveDelete, serveSaveWorkspace } from './image-route.js'
 import { serveImport } from './import-route.js'
-import { editOpenAICompatibleImage, generateOpenAICompatibleImage, resolveCompatImageSize } from './openai-compatible.js'
+import { editOpenAICompatibleImage, generateOpenAICompatibleImage } from './openai-compatible.js'
 import { type ResolvedReferenceImage, resolveReferenceImages } from './reference-image.js'
 import { editSeedreamImage } from './seedream.js'
 import { generateSubscriptionImage, registerSubscriptionRoutes, SubscriptionManager } from './subscription.js'
@@ -267,18 +267,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       const generated = await generateDashScopeImage({ apiKey: credential, endpoint: active.endpoint, model: active.model, prompt: args.prompt, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal })
       return saveGenerated(ctx, generated, active.provider, active.model, size, current(), exec, knownWorkspaceRoots)
     }
-    let size = args.size ?? active.imageSize
-    if (active.provider === 'openai-compat') {
-      const resolution = resolveCompatImageSize({
-        table: active.sizes,
-        ...(args.size === undefined ? {} : { size: args.size }),
-        ...(args.aspect_ratio === undefined ? {} : { aspectRatio: args.aspect_ratio }),
-        ...(args.image_size === undefined ? {} : { tier: args.image_size }),
-        defaultSize: active.imageSize,
-      })
-      if ('error' in resolution) throw new Error(`generate_image: ${resolution.error}`)
-      size = resolution.size
-    }
+    const size = args.size ?? active.imageSize
     // Ark output controls exist only on the Seedream profile; every other
     // provider in this branch ignores them.
     const arkOptions = active.provider === 'seedream' ? active.arkOptions : undefined
@@ -293,9 +282,9 @@ export function apply(ctx: Context, config: Config = {}): void {
       prompt: { type: 'string', required: true, description: 'Complete description of the image to generate.' },
       provider: { type: 'string', enum: ['google', 'openai', 'openai-compat', 'seedream', 'dashscope', 'xai', 'zhipu', 'comfyui', 'chatgpt-sub', 'grok-sub', 'google-sub'], description: 'Optional provider for this call only (for example when the user asks to use a specific provider); omit to use the configured default. chatgpt-sub, grok-sub, and google-sub generate through the logged-in subscription account instead of an API key.' },
       model: { type: 'string', description: 'Optional model name for this call only, overriding the configured model. Not used by ComfyUI (use workflow instead) nor by the subscription providers (model fixed by the subscription).' },
-      aspect_ratio: { type: 'string', description: 'Optional output aspect ratio. Google Gemini accepts 1:1, 3:2, 2:3, 4:3, 3:4, 16:9, 9:16. For the openai-compat provider it resolves against the size table configured in settings, so any ratio key there works (e.g. 21:9); combines with image_size and defaults to its 1K tier.' },
-      image_size: { type: 'string', enum: ['1K', '2K', '4K'], description: 'Optional resolution tier. Google Gemini accepts 1K, 2K, 4K; for the openai-compat provider it picks the tier under aspect_ratio in the configured size table. Ignored when size is given.' },
-      size: { type: 'string', description: 'Optional exact output dimensions like 1536x864 for OpenAI, Seedream, or DashScope. For openai-compat it must be one of the size-table values configured in settings or the call fails before the API request. Takes precedence over aspect_ratio and image_size.' },
+      aspect_ratio: { type: 'string', enum: ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'], description: 'Optional output aspect ratio for Google Gemini.' },
+      image_size: { type: 'string', enum: ['1K', '2K', '4K'], description: 'Optional output resolution for Google Gemini.' },
+      size: { type: 'string', description: 'Optional dimensions or size tier for OpenAI, Seedream, or DashScope.' },
       workflow: { type: 'string', description: 'Optional name of the ComfyUI workflow to run; omit to use the active workflow from settings. Only meaningful when the ComfyUI provider is selected.' },
     },
     output: imageOutput('Generated'),
@@ -312,9 +301,9 @@ export function apply(ctx: Context, config: Config = {}): void {
       prompts: { type: 'array', items: { type: 'string' }, required: true, description: 'Ordered complete prompts; one image is generated per entry (1-10).' },
       provider: { type: 'string', enum: ['google', 'openai', 'openai-compat', 'seedream', 'dashscope', 'xai', 'zhipu', 'comfyui', 'chatgpt-sub', 'grok-sub', 'google-sub'], description: 'Optional provider for this call only, applied to every item; omit to use the configured default.' },
       model: { type: 'string', description: 'Optional model name for this call only, applied to every item.' },
-      aspect_ratio: { type: 'string', description: 'Optional output aspect ratio, applied to every item. Google Gemini accepts 1:1, 3:2, 2:3, 4:3, 3:4, 16:9, 9:16. For the openai-compat provider it resolves against the size table configured in settings, so any ratio key there works (e.g. 21:9); combines with image_size and defaults to its 1K tier.' },
-      image_size: { type: 'string', enum: ['1K', '2K', '4K'], description: 'Optional resolution tier, applied to every item. Google Gemini accepts 1K, 2K, 4K; for the openai-compat provider it picks the tier under aspect_ratio in the configured size table. Ignored when size is given.' },
-      size: { type: 'string', description: 'Optional exact output dimensions like 1536x864, applied to every item, for OpenAI, Seedream, or DashScope. For openai-compat it must be one of the size-table values configured in settings or the call fails before the API request. Takes precedence over aspect_ratio and image_size.' },
+      aspect_ratio: { type: 'string', enum: ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'], description: 'Optional output aspect ratio for Google Gemini.' },
+      image_size: { type: 'string', enum: ['1K', '2K', '4K'], description: 'Optional output resolution for Google Gemini.' },
+      size: { type: 'string', description: 'Optional dimensions or size tier for OpenAI, Seedream, or DashScope.' },
       workflow: { type: 'string', description: 'Optional name of the ComfyUI workflow to run; omit to use the active workflow from settings.' },
     },
     output: {
@@ -385,9 +374,9 @@ export function apply(ctx: Context, config: Config = {}): void {
       source_attachment_ids: { type: 'array', items: { type: 'string' }, description: 'Optional ordered attachment ids of multiple images already present in the current conversation. Prompt references such as image 1 and image 2 follow this order.' },
       source_path: { type: 'string', description: 'Optional absolute or workspace-relative path of a specific image file inside the active session workspace. Prefer this when the user names a saved file.' },
       source_paths: { type: 'array', items: { type: 'string' }, description: 'Optional ordered absolute or workspace-relative paths of multiple image files inside the active session workspace.' },
-      aspect_ratio: { type: 'string', description: 'Optional output aspect ratio. Google Gemini accepts 1:1, 3:2, 2:3, 4:3, 3:4, 16:9, 9:16. For the openai-compat provider it resolves against the size table configured in settings, so any ratio key there works (e.g. 21:9); combines with image_size and defaults to its 1K tier.' },
-      image_size: { type: 'string', enum: ['1K', '2K', '4K'], description: 'Optional resolution tier. Google Gemini accepts 1K, 2K, 4K; for the openai-compat provider it picks the tier under aspect_ratio in the configured size table. Ignored when size is given.' },
-      size: { type: 'string', description: 'Optional output size for OpenAI, Seedream, or DashScope. For openai-compat it must be one of the size-table values configured in settings or the call fails before the API request. Takes precedence over aspect_ratio and image_size.' },
+      aspect_ratio: { type: 'string', enum: ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16'], description: 'Optional output aspect ratio for Google Gemini.' },
+      image_size: { type: 'string', enum: ['1K', '2K', '4K'], description: 'Optional output resolution for Google Gemini.' },
+      size: { type: 'string', description: 'Optional output size for OpenAI, Seedream, or DashScope.' },
       workflow: { type: 'string', description: 'Optional name of the ComfyUI workflow to run; omit to use the active workflow from settings. Only meaningful when the ComfyUI provider is selected.' },
     },
     output: imageOutput('Edited'),
@@ -462,18 +451,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         return saveGenerated(ctx, generated, active.provider, active.model, `${aspectRatio}, ${imageSize}`, current(), exec, knownWorkspaceRoots)
       }
 
-      let size = args.size ?? active.imageSize
-      if (active.provider === 'openai-compat') {
-        const resolution = resolveCompatImageSize({
-          table: active.sizes,
-          ...(args.size === undefined ? {} : { size: args.size }),
-          ...(args.aspect_ratio === undefined ? {} : { aspectRatio: args.aspect_ratio }),
-          ...(args.image_size === undefined ? {} : { tier: args.image_size }),
-          defaultSize: active.imageSize,
-        })
-        if ('error' in resolution) throw new Error(`edit_image: ${resolution.error}`)
-        size = resolution.size
-      }
+      const size = args.size ?? active.imageSize
       if (active.provider === 'openai' || active.provider === 'openai-compat' || active.provider === 'xai' || active.provider === 'zhipu') {
         const generated = await editOpenAICompatibleImage({ apiKey: credential, baseURL: active.baseURL, model: active.model, prompt: args.prompt, sourceImages, size, maxBytes: ctx.attachments.imageLimits.maxImageBytes, signal: exec.signal, ...(active.provider === 'openai-compat' ? { editFormat: active.editFormat, editExtra: active.editExtra } : {}) })
         return saveGenerated(ctx, generated, active.provider, active.model, size, current(), exec, knownWorkspaceRoots)

@@ -2,6 +2,7 @@
 import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import { prepareComfyUIWorkflow, randomSeed } from './comfyui-workflow.js'
 import { redactSecrets } from './redact.js'
+import { detectImageMediaType } from './reference-image.js'
 
 const ERROR_LIMIT = 4096
 const POLL_INTERVAL_MS = 500
@@ -188,9 +189,11 @@ async function downloadOutput(baseURL: URL, output: ComfyUIImageOutput, maxBytes
   url.searchParams.set('type', output.type)
   const response = await fetch(url, { redirect: 'error', signal })
   if (!response.ok) throw new Error(`ComfyUI image download failed (${response.status})`)
-  const mediaType = imageMediaType(response.headers.get('content-type')) ?? imageMediaTypeFromName(output.filename)
+  const data = await readBoundedBytes(response, maxBytes)
+  // Sniff first: self-hosted /view answers can carry a generic content-type (#61).
+  const mediaType = detectImageMediaType(data) ?? imageMediaType(response.headers.get('content-type')) ?? imageMediaTypeFromName(output.filename)
   if (mediaType === undefined) throw new Error('ComfyUI image download returned an unsupported content type')
-  return { data: await readBoundedBytes(response, maxBytes), mediaType }
+  return { data, mediaType }
 }
 
 function comfyUIBaseURL(value: string): URL {

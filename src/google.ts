@@ -2,6 +2,7 @@
 import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { AspectRatio, ImageSize } from './config.js'
 import { redactSecrets } from './redact.js'
+import { detectImageMediaType } from './reference-image.js'
 
 const ERROR_LIMIT = 4096
 const REQUESTED_MEDIA_TYPE = 'image/jpeg'
@@ -96,10 +97,13 @@ async function requestGoogleImage(input: GoogleRequestBase & {
   }
   const image = outputImage(payload)
   if (image === undefined) throw new Error(`${label} returned no image: ${redactSecrets(text, input.apiKey).slice(0, ERROR_LIMIT)}`)
-  const mediaType = mediaTypeOf(image.mime_type ?? REQUESTED_MEDIA_TYPE)
-  if (mediaType === undefined) throw new Error(`${label} returned unsupported media type ${JSON.stringify(image.mime_type)}`)
   const data = decodeBase64(image.data, label)
   if (data.byteLength > input.maxBytes) throw new Error(`${label} exceeded the ${String(input.maxBytes)} byte image limit`)
+  // Bytes are the ground truth: sniff before honoring the declared type so a
+  // proxy that drops or lies about mime_type cannot fail the host attachment
+  // service with IMAGE_TYPE_MISMATCH (#61).
+  const mediaType = detectImageMediaType(data) ?? mediaTypeOf(image.mime_type ?? REQUESTED_MEDIA_TYPE)
+  if (mediaType === undefined) throw new Error(`${label} returned unsupported media type ${JSON.stringify(image.mime_type)}`)
   return { data, mediaType }
 }
 

@@ -27,6 +27,31 @@ describe('generateGoogleImage', () => {
       response_format: { type: 'image', mime_type: 'image/jpeg', aspect_ratio: '16:9', image_size: '2K' },
     })
   })
+  it.each([undefined, 'image/jpeg', 'application/octet-stream'])('uses PNG bytes ahead of declared type %s', async (mimeType) => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64')
+    vi.stubGlobal('fetch', vi.fn(async () => response({
+      output_image: { data: png.toString('base64'), mime_type: mimeType },
+    })))
+    await expect(generateGoogleImage({
+      apiKey: 'key', endpoint, model: 'model', prompt: 'cat', aspectRatio: '1:1', imageSize: '1K', maxBytes: 1024, signal,
+    })).resolves.toEqual({ data: new Uint8Array(png), mediaType: 'image/png' })
+  })
+
+  it.each([undefined, null])('preserves the JPEG fallback for absent declared type %s', async (mimeType) => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({ output_image: { data: image, mime_type: mimeType } })))
+    await expect(generateGoogleImage({
+      apiKey: 'key', endpoint, model: 'model', prompt: 'cat', aspectRatio: '1:1', imageSize: '1K', maxBytes: 1024, signal,
+    })).resolves.toMatchObject({ mediaType: 'image/jpeg' })
+  })
+
+  it('rejects an explicitly unsupported format when the bytes cannot be recognized', async () => {
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64')
+    vi.stubGlobal('fetch', vi.fn(async () => response({ output_image: { data: svg, mime_type: 'image/svg+xml' } })))
+    await expect(generateGoogleImage({
+      apiKey: 'key', endpoint, model: 'model', prompt: 'cat', aspectRatio: '1:1', imageSize: '1K', maxBytes: 1024, signal,
+    })).rejects.toThrow('Google image generation returned unsupported media type "image/svg+xml"')
+  })
+
   it('sends resolved reference bytes for image editing', async () => {
     const fetchMock = vi.fn(async () => response({ output_image: { data: image, mime_type: 'image/jpeg' } }))
     vi.stubGlobal('fetch', fetchMock)

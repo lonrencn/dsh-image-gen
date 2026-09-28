@@ -129,14 +129,24 @@ function openAICompatStudioProfile(config: Config, model: string, configured: bo
   const tierMap = new Map<string, StudioOption>()
   for (const group of groups) for (const entry of group.tiers) tierMap.set(entry.tier, { value: entry.tier, label: entry.tier })
   const qualityOptions = [...tierMap.values()].sort((a, b) => (tierRank(a.value) || 0) - (tierRank(b.value) || 0))
+  // Defaults must form a generatable pair. A global "2K" default is wrong on a
+  // sparse table: a default ratio whose tiers stop at 1K would either reject
+  // outright or silently downsample before the user touches anything, so the
+  // quality default comes from the default ratio's own tiers (2K preferred,
+  // otherwise its lowest tier).
+  const defaultRatio = ratioOptions.some(entry => entry.value === '1:1') ? '1:1' : (ratioOptions[0]?.value ?? '1:1')
+  const defaultRatioTiers = groups.find(group => group.ratio === defaultRatio)?.tiers ?? []
+  const defaultQuality = defaultRatioTiers.find(entry => entry.tier === '2K')?.tier
+    ?? defaultRatioTiers[0]?.tier
+    ?? (qualityOptions[0]?.value ?? 'standard')
   return profile(
     'openai-compat',
     model,
     configured,
     ratioOptions.length > 0 ? ratioOptions : ['1:1', '3:2', '2:3'].map(option),
     qualityOptions.length > 0 ? qualityOptions : [{ value: 'standard', label: '标准（推荐）' }],
-    ratioOptions.some(entry => entry.value === '1:1') ? '1:1' : (ratioOptions[0]?.value ?? '1:1'),
-    tierMap.has('2K') ? '2K' : (qualityOptions[0]?.value ?? 'standard'),
+    defaultRatio,
+    defaultQuality,
   )
 }
 

@@ -116,7 +116,7 @@ export function parseStudioGenerateRequest(value: unknown): StudioGenerateReques
   if (input === undefined) throw new Error('请求格式无效')
   if (input.mode !== 'generate' && input.mode !== 'edit') throw new Error('请选择生成类型')
   if (!studioProvider(input.provider)) throw new Error('不支持该图像 Provider')
-  const prompt = requiredText(input.prompt, '请输入提示词', 2_000)
+  const prompt = requiredText(input.prompt, '请输入提示词')
   const model = requiredText(input.model, '请选择模型', 200)
   const ratio = requiredText(input.ratio, '请选择比例', 32)
   const quality = requiredText(input.quality, '请选择清晰度', 32)
@@ -171,10 +171,10 @@ function parseReference(value: unknown): StudioReference {
   }
 }
 
-function requiredText(value: unknown, message: string, maxLength: number): string {
+function requiredText(value: unknown, message: string, maxLength?: number): string {
   if (typeof value !== 'string' || value.trim().length === 0) throw new Error(message)
   const text = value.trim()
-  if (text.length > maxLength) throw new Error(`${message}（最多 ${String(maxLength)} 个字符）`)
+  if (maxLength !== undefined && text.length > maxLength) throw new Error(`${message}（最多 ${String(maxLength)} 个字符）`)
   return text
 }
 

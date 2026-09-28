@@ -33,6 +33,21 @@ describe('editSeedreamImage', () => {
     expect(body.resolution).toBeUndefined()
   })
 
+  // Ark never returns mime_type and its bytes follow output_format (jpeg by
+  // default): the declared mediaType must be sniffed from the bytes, or the
+  // host attachment service rejects them with IMAGE_TYPE_MISMATCH (#61).
+  it('sniffs the media type from Ark base64 bytes without mime_type', async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: [{ b64_json: Buffer.from(jpeg).toString('base64') }] }), { headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(editSeedreamImage({
+      apiKey: 'ark-key', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-seedream-5-0-260128',
+      prompt: 'edit', sourceImages: [{ data: new Uint8Array([1]), mediaType: 'image/png' }],
+      maxBytes: 1024, signal,
+    })).resolves.toEqual({ data: jpeg, mediaType: 'image/jpeg' })
+  })
+
   // Empty-string fields must not shadow a usable sibling value (#41 note).
   it('falls back to url when b64_json is an empty string', async () => {
     const fetchMock = vi.fn()

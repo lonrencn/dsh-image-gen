@@ -2,6 +2,7 @@
 import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { GeneratedCompatibleImage } from './openai-compatible.js'
 import { redactSecrets } from './redact.js'
+import { detectImageMediaType } from './reference-image.js'
 import { arkOutputBody, type ArkOutputOptions } from './shared.js'
 
 const ERROR_LIMIT = 4096
@@ -42,7 +43,13 @@ export async function editSeedreamImage(input: {
   try { payload = JSON.parse(text) } catch { throw new Error('seedream image editing returned invalid JSON') }
   const image = firstImage(payload)
   if (image === undefined) throw new Error(`seedream image editing returned no image: ${redactSecrets(text, input.apiKey).slice(0, ERROR_LIMIT)}`)
-  if (image.b64_json !== undefined) return { data: decodeBase64(image.b64_json), mediaType: imageMediaType(image.mime_type) ?? 'image/png' }
+  if (image.b64_json !== undefined) {
+    // Ark omits mime_type and its bytes follow output_format (jpeg by default),
+    // so sniff before trusting the header; a sniffed mismatch would otherwise
+    // fail the host attachment service with IMAGE_TYPE_MISMATCH (#61).
+    const data = decodeBase64(image.b64_json)
+    return { data, mediaType: detectImageMediaType(data) ?? imageMediaType(image.mime_type) ?? 'image/png' }
+  }
   return downloadImage(image.url, input)
 }
 

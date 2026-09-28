@@ -92,7 +92,7 @@ interface ImageSettings {
   openaiCompatBaseURL?: string
   openaiCompatModel?: string
   /** Edit-request shape for the openai-compat relay (#41); see src/config.ts. */
-  openaiCompatEditFormat?: 'multipart' | 'jsonImageUrlArray'
+  openaiCompatEditFormat?: 'multipart' | 'jsonImageUrlArray' | 'formReferenceImages'
   /** Extra JSON fields merged into the JSON edit body; ignored in multipart mode. */
   openaiCompatEditExtra?: Record<string, unknown>
   seedreamBaseURL?: string
@@ -246,7 +246,8 @@ const DICT = {
     editFormat: '图生图请求形态',
     editFormatMultipart: '标准 multipart（OpenAI 官方）',
     editFormatJsonImageUrlArray: 'JSON images 数组（商汤等中转）',
-    editFormatHint: '文生图不受影响。仅当中转站的图生图接口使用自有 JSON 契约（如商汤 SenseNova）时才需要切换。',
+    editFormatFormReferenceImages: 'multipart + reference_images JSON 数组（base64）',
+    editFormatHint: '文生图不受影响。仅当中转站的图生图接口使用自有契约（如商汤 SenseNova 的 JSON images 数组，或要求 reference_images base64 数组的中转）时才需要切换。',
     editExtra: '附加 JSON 字段',
     editExtraPlaceholder: '{"watermark": false, "prompt_extend": true}',
     editExtraHint: '仅 JSON 形态生效；会合并到请求体末尾，可覆盖默认字段。留空表示不附加。',
@@ -390,7 +391,8 @@ const DICT = {
     editFormat: 'Edit request format',
     editFormatMultipart: 'Standard multipart (official OpenAI)',
     editFormatJsonImageUrlArray: 'JSON images array (SenseNova etc.)',
-    editFormatHint: 'Text-to-image is unaffected. Only switch when the relay runs image edits on its own JSON contract (e.g. SenseNova); size is pinned to "auto" in this format (the only value SenseNova\'s edits endpoint accepts) and can be overridden via extra fields.',
+    editFormatFormReferenceImages: 'Multipart with a reference_images JSON array (base64)',
+    editFormatHint: 'Text-to-image is unaffected. Only switch when the relay runs image edits on its own contract (e.g. SenseNova\'s JSON images array, or a relay that takes reference_images as a base64 JSON array); size is pinned to "auto" in the JSON images format (the only value SenseNova\'s edits endpoint accepts) and can be overridden via extra fields.',
     editExtra: 'Extra JSON fields',
     editExtraPlaceholder: '{"watermark": false, "prompt_extend": true}',
     editExtraHint: 'Only used with the JSON format; merged into the request body last and may override defaults. Leave empty for none.',
@@ -1105,7 +1107,7 @@ interface ProviderRowState {
   activeWorkflow: string
   timeoutSeconds: number
   /** openai-compat only: edits request shape (#41). Other rows keep the default. */
-  editFormat: 'multipart' | 'jsonImageUrlArray'
+  editFormat: 'multipart' | 'jsonImageUrlArray' | 'formReferenceImages'
   /** openai-compat only: extra JSON fields for the JSON edit body, as user text. */
   editExtraText: string
   /** seedream only: Ark output controls. Other rows keep the defaults. */
@@ -1197,6 +1199,11 @@ function editExtraTextOf(value: Record<string, unknown> | undefined): string {
   try { return JSON.stringify(value) } catch { return '' }
 }
 
+/** Persisted or selected edit-format value → row state; unknown values fall back to standard multipart. */
+function parseEditFormat(value: string | undefined): 'multipart' | 'jsonImageUrlArray' | 'formReferenceImages' {
+  return value === 'jsonImageUrlArray' || value === 'formReferenceImages' ? value : 'multipart'
+}
+
 /** Build one row per provider from persisted settings, including ComfyUI extras. */
 function rowsFromSettings(value: ImageSettings | undefined): Record<Provider, ProviderRowState> {
   const rows = {} as Record<Provider, ProviderRowState>
@@ -1211,7 +1218,7 @@ function rowsFromSettings(value: ImageSettings | undefined): Record<Provider, Pr
         timeoutSeconds: Math.max(1, Math.round((value?.comfyuiTimeoutMs ?? DEFAULT_COMFYUI_TIMEOUT_MS) / 1000)),
       } : {}),
       ...(provider === 'openai-compat' ? {
-        editFormat: value?.openaiCompatEditFormat === 'jsonImageUrlArray' ? 'jsonImageUrlArray' : 'multipart',
+        editFormat: parseEditFormat(value?.openaiCompatEditFormat),
         editExtraText: editExtraTextOf(value?.openaiCompatEditExtra),
       } : {}),
       ...(provider === 'seedream' ? {
@@ -1797,11 +1804,12 @@ export function ImageGenerationSettingsCard(props: SettingsCardProps) {
               <select
                 className="dsh-ig-input"
                 value={row.editFormat}
-                onChange={event => { updateRow(provider, { editFormat: event.target.value === 'jsonImageUrlArray' ? 'jsonImageUrlArray' : 'multipart' }) }}
+                onChange={event => { updateRow(provider, { editFormat: parseEditFormat(event.target.value) }) }}
                 disabled={!snapshot.writable}
               >
                 <option value="multipart">{t('editFormatMultipart')}</option>
                 <option value="jsonImageUrlArray">{t('editFormatJsonImageUrlArray')}</option>
+                <option value="formReferenceImages">{t('editFormatFormReferenceImages')}</option>
               </select>
               <span className="dsh-ig-hint">{t('editFormatHint')}</span>
             </label>
@@ -2440,7 +2448,6 @@ function ImageResultCard({
           <textarea
             ref={regenerateTextareaRef}
             value={regeneratePrompt}
-            maxLength={2000}
             disabled={isRegenerating}
             onChange={(event) => setRegeneratePrompt(event.target.value)}
             onKeyDown={(event) => {

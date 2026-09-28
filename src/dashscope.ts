@@ -1,6 +1,7 @@
 /** DashScope Qwen Image generation and editing adapter. */
 import type { ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import { redactSecrets } from './redact.js'
+import { detectImageMediaType } from './reference-image.js'
 
 export interface DashScopeImageOptions {
   apiKey: string
@@ -149,10 +150,18 @@ async function downloadImageBlob(
   if (buffer.byteLength > options.maxBytes) {
     throw new Error(`DashScope generated image (${String(buffer.byteLength)} bytes) exceeds the ${String(options.maxBytes)} byte limit`)
   }
-  const contentType = imageResponse.headers.get('content-type')
-  const mediaType: ImageAttachmentRef['mediaType'] =
-    contentType?.includes('png') ? 'image/png' :
-    contentType?.includes('webp') ? 'image/webp' :
-    'image/jpeg'
-  return { data: new Uint8Array(buffer), mediaType }
+  // Sniff first: the OSS CDN can answer a generic content-type (or none) while
+  // the bytes stay PNG/WebP, and a mis-declared type fails the host attachment
+  // service with IMAGE_TYPE_MISMATCH (#61).
+  const data = new Uint8Array(buffer)
+  const mediaType = detectImageMediaType(data) ?? imageMediaType(imageResponse.headers.get('content-type'))
+  if (mediaType === undefined) {
+    throw new Error(`DashScope image download returned an unsupported content type: ${imageResponse.headers.get('content-type') ?? 'none'}`)
+  }
+  return { data, mediaType }
+}
+
+function imageMediaType(value: string | null | undefined): ImageMediaType | undefined {
+  const mediaType = value?.split(';', 1)[0]?.trim().toLowerCase()
+  return mediaType === 'image/png' || mediaType === 'image/jpeg' || mediaType === 'image/webp' || mediaType === 'image/gif' ? mediaType : undefined
 }

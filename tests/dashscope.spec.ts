@@ -70,6 +70,45 @@ describe('generateDashScopeImage', () => {
     })
   })
 
+  // The OSS CDN can answer a generic content-type while the bytes stay PNG;
+  // the declared mediaType must come from the bytes (#61).
+  it('sniffs the media type when the DashScope CDN returns a generic content-type', async () => {
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const urlStr = String(url)
+      if (urlStr.includes('/services/aigc/multimodal-generation/generation')) {
+        return jsonResponse({
+          output: { choices: [{ message: { content: [{ image: 'https://dashscope-result.oss.aliyuncs.com/qwen.png' }] } }] },
+        })
+      }
+      return imageResponse(pngBytes, 'application/octet-stream')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await generateDashScopeImage({
+      apiKey: 'sk-dashscope-test', endpoint, model: 'qwen-image-3.0', prompt: 'cyberpunk city', maxBytes: 1024 * 1024, signal,
+    })
+    expect(result.mediaType).toBe('image/png')
+    expect(result.data).toEqual(new Uint8Array(pngBytes))
+  })
+
+  it('rejects a DashScope image download with an unrecognizable format', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const urlStr = String(url)
+      if (urlStr.includes('/services/aigc/multimodal-generation/generation')) {
+        return jsonResponse({
+          output: { choices: [{ message: { content: [{ image: 'https://dashscope-result.oss.aliyuncs.com/qwen.png' }] } }] },
+        })
+      }
+      return imageResponse(Buffer.from('not-an-image'), 'application/octet-stream')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(generateDashScopeImage({
+      apiKey: 'sk-dashscope-test', endpoint, model: 'qwen-image-3.0', prompt: 'cyberpunk city', maxBytes: 1024 * 1024, signal,
+    })).rejects.toThrow('unsupported content type: application/octet-stream')
+  })
+
   it('rejects non-Qwen DashScope image models before making a request', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)

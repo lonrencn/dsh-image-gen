@@ -64,6 +64,24 @@ describe('OpenAI-compatible images', () => {
     await expect(generateOpenAICompatibleImage({ provider: 'seedream', apiKey: 'key', baseURL: 'https://ark.example/api/v3', model: 'seedream', prompt: 'a cat', size: '2K', maxBytes: 1024, signal })).resolves.toEqual({ data: new Uint8Array([1, 2]), mediaType: 'image/jpeg' })
   })
 
+  // Relays can omit mime_type while returning non-PNG bytes (Ark jpeg): the
+  // declared mediaType is sniffed from the bytes, not assumed to be PNG (#61).
+  it('sniffs jpeg from base64 bytes when the relay omits mime_type', async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 4, 5, 6])
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: [{ b64_json: Buffer.from(jpeg).toString('base64') }] }), { headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(generateOpenAICompatibleImage({ provider: 'openai-compat', apiKey: 'key', baseURL: 'https://relay.example/v1', model: 'image-model', prompt: 'a cat', size: '1024x1024', maxBytes: 1024, signal })).resolves.toEqual({ data: jpeg, mediaType: 'image/jpeg' })
+  })
+
+  it('sniffs the media type from a data-URL image body', async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 7, 8])
+    const dataUrl = `data:image/png;base64,${Buffer.from(jpeg).toString('base64')}`
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: [{ url: dataUrl }] }), { headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(generateOpenAICompatibleImage({ provider: 'openai-compat', apiKey: 'key', baseURL: 'https://relay.example/v1', model: 'image-model', prompt: 'a cat', size: '1024x1024', maxBytes: 1024, signal })).resolves.toEqual({ data: jpeg, mediaType: 'image/jpeg' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   // Relay CDNs that reject Authorization headers on public image URLs (#37):
   // the authenticated download gets a 401/403, the retry without the header succeeds.
   it('retries image download without the auth header after 401', async () => {
