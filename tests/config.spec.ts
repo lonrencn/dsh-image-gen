@@ -103,6 +103,19 @@ describe('openai-compat provider', () => {
       imageSize: '1024x1024',
       editFormat: 'multipart',
       editExtra: {},
+      sizes: {},
+    })
+  })
+
+  it('carries the configured size table through to the profile', () => {
+    expect(resolveProvider({
+      provider: 'openai-compat',
+      openaiCompatBaseURL: 'https://relay.example.com/v1',
+      openaiCompatModel: 'image-2',
+      openaiCompatSizes: { '16:9': { '1K': '1536x864' } },
+    })).toMatchObject({
+      provider: 'openai-compat',
+      sizes: { '16:9': { '1K': '1536x864' } },
     })
   })
 

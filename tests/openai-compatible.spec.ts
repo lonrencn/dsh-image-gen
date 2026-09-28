@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { editOpenAICompatibleImage, generateOpenAICompatibleImage } from '../src/openai-compatible.js'
+import { editOpenAICompatibleImage, generateOpenAICompatibleImage, resolveCompatImageSize } from '../src/openai-compatible.js'
 
 afterEach(() => { vi.unstubAllGlobals() })
 const signal = new AbortController().signal
@@ -208,5 +208,66 @@ describe('OpenAI-compatible images', () => {
     vi.stubGlobal('fetch', fetchMock)
     await expect(generateOpenAICompatibleImage({ provider: 'openai-compat', apiKey: 'key', baseURL: 'https://relay.example/v1', model: 'agnes-image', prompt: 'a cat', size: '1024x1024', maxBytes: 1024, signal })).rejects.toThrow('image download failed (401)')
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('resolveCompatImageSize', () => {
+  const table = {
+    '1:1': { '1K': '1024x1024', '2K': '2048x2048' },
+    '16:9': { '1K': '1536x864', '2K': '2048x1152' },
+  }
+
+  it('passes an explicit in-table size through', () => {
+    expect(resolveCompatImageSize({ table, size: '2048x1152', defaultSize: '1024x1024' })).toEqual({ size: '2048x1152' })
+  })
+
+  it('rejects an off-table size listing every supported size', () => {
+    expect(resolveCompatImageSize({ table, size: '999x999', defaultSize: '1024x1024' })).toEqual({
+      error: 'unsupported size "999x999"; supported sizes: 1024x1024, 1536x864, 2048x1152, 2048x2048',
+    })
+  })
+
+  it('passes any size through when no table is configured', () => {
+    expect(resolveCompatImageSize({ table: {}, size: '999x999', defaultSize: '1024x1024' })).toEqual({ size: '999x999' })
+  })
+
+  it('resolves an aspect ratio with the default 1K tier', () => {
+    expect(resolveCompatImageSize({ table, aspectRatio: '16:9', defaultSize: '1024x1024' })).toEqual({ size: '1536x864' })
+  })
+
+  it('resolves an aspect ratio with an explicit tier', () => {
+    expect(resolveCompatImageSize({ table, aspectRatio: '16:9', tier: '2K', defaultSize: '1024x1024' })).toEqual({ size: '2048x1152' })
+  })
+
+  it('rejects an aspect ratio without a table', () => {
+    expect(resolveCompatImageSize({ table: {}, aspectRatio: '16:9', defaultSize: '1024x1024' })).toEqual({
+      error: 'aspect_ratio requires a configured size table (openaiCompatSizes); pass an exact size string instead',
+    })
+  })
+
+  it('rejects an unknown ratio listing the table keys', () => {
+    expect(resolveCompatImageSize({ table, aspectRatio: '21:9', defaultSize: '1024x1024' })).toEqual({
+      error: 'unsupported aspect_ratio "21:9"; supported ratios: 1:1, 16:9',
+    })
+  })
+
+  it('rejects an unknown tier listing the tier keys', () => {
+    expect(resolveCompatImageSize({ table, aspectRatio: '16:9', tier: '4K', defaultSize: '1024x1024' })).toEqual({
+      error: 'unsupported image_size "4K" for aspect_ratio "16:9"; supported tiers: 1K, 2K',
+    })
+  })
+
+  it('prefers the explicit size over the aspect ratio', () => {
+    expect(resolveCompatImageSize({ table, size: '1024x1024', aspectRatio: '16:9', tier: '2K', defaultSize: '1024x1024' })).toEqual({ size: '1024x1024' })
+  })
+
+  it('validates the default size against the table', () => {
+    expect(resolveCompatImageSize({ table: { '16:9': { '1K': '1536x864' } }, defaultSize: '1024x1024' })).toEqual({
+      error: 'unsupported default size "1024x1024"; supported sizes: 1536x864',
+    })
+  })
+
+  it('returns the default size when nothing was requested', () => {
+    expect(resolveCompatImageSize({ table, defaultSize: '1024x1024' })).toEqual({ size: '1024x1024' })
   })
 })

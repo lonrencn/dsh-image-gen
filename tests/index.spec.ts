@@ -515,6 +515,93 @@ describe('image tool registration', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('resolves aspect_ratio and image_size through the compat size table', async () => {
+    const { ctx, tools } = harnessContext()
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('wide').toString('base64') }] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, {
+      provider: 'openai-compat',
+      openaiCompatBaseURL: 'https://relay.example.com/v1',
+      openaiCompatModel: 'image-2',
+      openaiCompatSizes: { '1:1': { '1K': '1024x1024' }, '16:9': { '1K': '1536x864', '2K': '2048x1152' } },
+      saveToWorkspace: false,
+    })
+
+    const value = await toolByName(tools, 'generate_image').execute(
+      { prompt: 'a wide cover', aspect_ratio: '16:9', image_size: '2K' },
+      { signal: new AbortController().signal } as never,
+    ) as { provider: string }
+    expect(value.provider).toBe('openai-compat')
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://relay.example.com/v1/images/generations')
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body)) as { size: string }
+    expect(body.size).toBe('2048x1152')
+  })
+
+  it('defaults a compat aspect_ratio to its 1K tier', async () => {
+    const { ctx, tools } = harnessContext()
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('wide').toString('base64') }] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, {
+      provider: 'openai-compat',
+      openaiCompatBaseURL: 'https://relay.example.com/v1',
+      openaiCompatModel: 'image-2',
+      openaiCompatSizes: { '16:9': { '1K': '1536x864', '2K': '2048x1152' } },
+      saveToWorkspace: false,
+    })
+
+    await toolByName(tools, 'generate_image').execute(
+      { prompt: 'a wide cover', aspect_ratio: '16:9' },
+      { signal: new AbortController().signal } as never,
+    )
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body)) as { size: string }
+    expect(body.size).toBe('1536x864')
+  })
+
+  it('rejects an off-table compat size before any API request', async () => {
+    const { ctx, tools } = harnessContext()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, {
+      provider: 'openai-compat',
+      openaiCompatBaseURL: 'https://relay.example.com/v1',
+      openaiCompatModel: 'image-2',
+      openaiCompatSizes: { '1:1': { '1K': '1024x1024' } },
+      saveToWorkspace: false,
+    })
+
+    await expect(toolByName(tools, 'generate_image').execute(
+      { prompt: 'a cover', size: '999x999' },
+      { signal: new AbortController().signal } as never,
+    )).rejects.toThrow('unsupported size "999x999"; supported sizes: 1024x1024')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('routes the resolved compat size through edit_image', async () => {
+    const { ctx, tools } = harnessContext()
+    vi.mocked(ctx.attachments.readImage).mockResolvedValue({
+      ref: { mediaType: 'image/png', attachmentId: 'sha256:source-image' as ImageAttachmentRef['attachmentId'], bytes: 3, width: 4, height: 4 },
+      data: new Uint8Array([1, 2, 3]),
+    } as never)
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('edited').toString('base64') }] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    apply(ctx, {
+      provider: 'openai-compat',
+      openaiCompatBaseURL: 'https://relay.example.com/v1',
+      openaiCompatModel: 'image-2',
+      openaiCompatEditFormat: 'multipart',
+      openaiCompatSizes: { '9:16': { '1K': '864x1536' } },
+      saveToWorkspace: false,
+    })
+
+    await toolByName(tools, 'edit_image').execute(
+      { prompt: 'make it vertical', aspect_ratio: '9:16' },
+      execWithUserImages('sha256:source-image'),
+    )
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://relay.example.com/v1/images/edits')
+    const form = (fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body as FormData
+    expect(form.get('size')).toBe('864x1536')
+  })
+
   it('honours a per-call provider override without touching the saved config', async () => {
     const { ctx, tools } = harnessContext()
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

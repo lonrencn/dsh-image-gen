@@ -16,6 +16,62 @@ export interface CompatibleReferenceImage {
   mediaType: ImageMediaType
 }
 
+/** Configured size table: aspect ratio -> tier -> exact `WxH` string. */
+export type CompatSizeTable = Record<string, Record<string, string>>
+
+export type CompatSizeResolution = { size: string } | { error: string }
+
+const DEFAULT_COMPAT_TIER = '1K'
+
+/**
+ * Resolve the exact size string for an OpenAI-compatible relay from the
+ * configured size table. Precedence: explicit `size`, then `aspectRatio`
+ * combined with `tier` (default `1K`), then `defaultSize`. With a configured
+ * table the effective size must be one of its values; every failure lists the
+ * supported options so the caller can retry without another round-trip. An
+ * absent table disables validation and aspect-ratio resolution entirely.
+ *
+ * @param input.table value of the `openaiCompatSizes` config, possibly empty.
+ * @param input.size explicit exact dimensions requested by the caller.
+ * @param input.aspectRatio ratio key from the table, e.g. `16:9`.
+ * @param input.tier tier key under the ratio, e.g. `2K`.
+ * @param input.defaultSize configured fallback when nothing was requested.
+ * @returns the exact size string, or an error message naming the options.
+ */
+export function resolveCompatImageSize(input: { table: CompatSizeTable; size?: string; aspectRatio?: string; tier?: string; defaultSize: string }): CompatSizeResolution {
+  const exactSizes = new Set<string>()
+  for (const tiers of Object.values(input.table)) {
+    for (const value of Object.values(tiers)) exactSizes.add(value)
+  }
+  const hasTable = exactSizes.size > 0
+  const list = (values: readonly string[]): string => values.length > 0 ? values.join(', ') : '(none)'
+  if (input.size !== undefined) {
+    if (hasTable && !exactSizes.has(input.size)) {
+      return { error: `unsupported size "${input.size}"; supported sizes: ${list([...exactSizes].sort())}` }
+    }
+    return { size: input.size }
+  }
+  if (input.aspectRatio !== undefined) {
+    if (!hasTable) {
+      return { error: 'aspect_ratio requires a configured size table (openaiCompatSizes); pass an exact size string instead' }
+    }
+    const tiers = input.table[input.aspectRatio]
+    if (tiers === undefined) {
+      return { error: `unsupported aspect_ratio "${input.aspectRatio}"; supported ratios: ${list(Object.keys(input.table))}` }
+    }
+    const tier = input.tier ?? DEFAULT_COMPAT_TIER
+    const size = tiers[tier]
+    if (size === undefined) {
+      return { error: `unsupported image_size "${tier}" for aspect_ratio "${input.aspectRatio}"; supported tiers: ${list(Object.keys(tiers))}` }
+    }
+    return { size }
+  }
+  if (hasTable && !exactSizes.has(input.defaultSize)) {
+    return { error: `unsupported default size "${input.defaultSize}"; supported sizes: ${list([...exactSizes].sort())}` }
+  }
+  return { size: input.defaultSize }
+}
+
 export async function generateOpenAICompatibleImage(input: {
   provider: 'openai' | 'openai-compat' | 'seedream' | 'xai' | 'zhipu'
   apiKey: string

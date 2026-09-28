@@ -194,7 +194,7 @@ export const Config: z<Config> = z.object({
 export function resolveProvider(config: Config):
   | { provider: 'google'; apiKeyEnv: string; model: string; endpoint: string; aspectRatio: AspectRatio; imageSize: ImageSize }
   | { provider: 'openai'; apiKeyEnv: string; model: string; baseURL: string; imageSize: string }
-  | { provider: 'openai-compat'; apiKeyEnv: string; model: string; baseURL: string; imageSize: string; editFormat: 'multipart' | 'jsonImageUrlArray' | 'formReferenceImages'; editExtra: Record<string, unknown> }
+  | { provider: 'openai-compat'; apiKeyEnv: string; model: string; baseURL: string; imageSize: string; editFormat: 'multipart' | 'jsonImageUrlArray' | 'formReferenceImages'; editExtra: Record<string, unknown>; sizes: Record<string, Record<string, string>> }
   | { provider: 'seedream'; apiKeyEnv: string; model: string; baseURL: string; imageSize: string; arkOptions: ArkOutputOptions }
   | { provider: 'dashscope'; apiKeyEnv: string; model: string; endpoint: string; imageSize: string }
   | { provider: 'xai'; apiKeyEnv: string; model: string; baseURL: string; imageSize: string }
@@ -214,7 +214,7 @@ export function resolveProvider(config: Config):
       if (model === undefined || model.length === 0) {
         throw new Error('OpenAI 兼容 provider requires a model name; set it in Settings > Plugins > Image generation.')
       }
-      return { provider: 'openai-compat', apiKeyEnv: OPENAI_COMPAT_API_KEY_ENV, model, baseURL, imageSize: '1024x1024', editFormat: config.openaiCompatEditFormat ?? 'multipart', editExtra: config.openaiCompatEditExtra ?? {} }
+      return { provider: 'openai-compat', apiKeyEnv: OPENAI_COMPAT_API_KEY_ENV, model, baseURL, imageSize: '1024x1024', editFormat: config.openaiCompatEditFormat ?? 'multipart', editExtra: config.openaiCompatEditExtra ?? {}, sizes: config.openaiCompatSizes ?? {} }
     }
     case 'seedream': {
       const seedreamBackground = config.seedreamBackground ?? 'opaque'

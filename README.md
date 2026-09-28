@@ -161,10 +161,40 @@ pnpm dsh plugin --profile web add ./dsh-image-gen
 
 <div align="center">
   <img src="docs/assets/readme/regenerating.webp" alt="图片正在重新生成" width="46%" />
-  <img src="docs/assets/readme/revision-switcher.webp" alt="在同一图片卡片中切换生成版本" width="46%" />
+  <img src="docs/assets/readme/revision-switcher.webp" alt="在同一图片卡片中切换历史版本" width="46%" />
   <br />
   <sub>修改 Prompt 后原位重新生成，并在同一张图片卡片中切换历史版本。</sub>
 </div>
+
+<br />
+
+### 📐 Agent 生图的尺寸控制
+
+`generate_image` / `generate_images` / `edit_image` 的尺寸参数按 provider 分流：
+
+| 参数 | OpenAI 兼容中转 | Google Gemini | 其他 provider |
+| --- | --- | --- | --- |
+| `aspect_ratio` | 经尺寸表解析（任意表内比例，如 `21:9`） | 直接支持 `1:1` `3:2` `2:3` `4:3` `3:4` `16:9` `9:16` | 忽略 |
+| `image_size` | 在尺寸表中取 `aspect_ratio` 下的档位（默认 `1K`） | `1K` `2K` `4K` | 忽略 |
+| `size` | 精确尺寸串（如 `1536x864`），必须在表内 | 忽略 | 透传（OpenAI / Seedream / DashScope） |
+
+优先级：`size` > `aspect_ratio` + `image_size` > 默认（`1024x1024`）。OpenAI 兼容 provider 在 `cordis.yml` 配置尺寸表后，`aspect_ratio` 才可用；不在表内的取值会在请求前直接报错并列出全部支持值，不消耗 API 调用：
+
+```yaml
+provider: openai-compat
+openaiCompatSizes:
+  '1:1':  { '1K': 1024x1024, '2K': 2048x2048 }
+  '16:9': { '1K': 1536x864,  '2K': 2048x1152 }
+```
+
+Agent 侧等价调用示例：
+
+```jsonc
+// 16:9 封面，2K 档 → 实际发送 size=2048x1152
+{ "prompt": "...", "aspect_ratio": "16:9", "image_size": "2K" }
+// 精确尺寸，优先级最高
+{ "prompt": "...", "size": "1536x864" }
+```
 
 <br />
 
